@@ -1,4 +1,4 @@
-// Token Radar (radar-3) — the entry program, Node 22, standard library only.
+// Token Radar (radar-4) — the entry program, Node 22, standard library only.
 //
 // It reads the sealed snapshot from /input/snapshot.json (or --input
 // <file|dir>), scores every pre-token protocol with the model in
@@ -83,5 +83,6 @@ writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEX
 
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.anchors_size} live-token anchors, ${radar.set_aside.length} set aside)\n` +
+    `token radar: fit on ${radar.fit.fit_anchors_n} dated anchors; LOO miss x${radar.fit.loo_miss_factor.toFixed(2)}, holdout miss x${radar.fit.holdout_miss_factor.toFixed(2)}, walk-forward miss x${radar.fit.wf_miss_factor.toFixed(2)}, range holds ${(radar.fit.range_holds * 100).toFixed(0)}%; verdicts farm ${radar.kpis.farmable_count} / marginal ${radar.kpis.marginal_count} / skip ${radar.kpis.skip_count}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );

@@ -1,24 +1,29 @@
-// Token Radar — the valuation model (radar-2).
+// Token Radar — the valuation model (radar-3).
 //
-// The board ranks pre-token protocols by an implied value that is computed
-// from the snapshot's own figures only. No protocol name is ever special-
-// cased: one function scores every row.
+// The board ranks pre-token protocols by an implied value fitted from the
+// snapshot's own figures, not from a hand-picked multiple. The 144 live-
+// token protocols that carry a market cap are the anchors: a log-linear
+// regression of log10(market-cap / TVL) on size, seven-day growth, age,
+// chain count and category, fitted by ordinary least squares with a tiny
+// ridge term for stability. A seeded 80/20 holdout measures the fit out
+// of sample before the model is refit on all 144 anchors and applied to
+// the 342 pre-token rows. No protocol name is ever special-cased: one
+// fitted function scores every row, and the dashboard prints the fit so
+// anyone can check it.
 //
-//   category multiple = median market-cap / TVL of the live-token protocols
-//                         in the same category (at least 3 of them, else the
-//                         global median), clamped to [0.05, 1.50]
-//   growth multiplier = 1 + clamp(change_7d, -60, 120) / 100 * 0.6
-//   maturity mult.    = 0.70 + min(age_days, 1095) / 1095 * 0.30
-//   chain multiplier  = 1 + 0.04 * min(chains - 1, 5)
-//   implied value     = round(tvl * category * growth * maturity * chains)
+//   y = log10(mcap / TVL), winsorized to [-2, 1.3]
+//   x = 1, log10(TVL) - 8, clamp(change_7d, -60, 120) / 100,
+//       log10(age_days + 1) - log10(366), age unknown (0/1),
+//       log10(chains), one dummy per category with 8 or more anchors
+//   multiple = clamp(10 ^ (x . beta), 0.02, 3)
+//   implied value = round(tvl * multiple)
 //
-// Why a category multiple beats a flat one: the snapshot itself shows the
-// market pays very differently per category (liquid staking ~0.04x TVL,
-// lending ~0.13x, dexes ~0.34x, cross-chain bridges ~1.2x). A flat
-// multiple prices a staking protocol like a dex. The multiple is read off
-// the live-token protocols, so the model learns the market from the data
-// it is given, and a category with too few live peers falls back to the
-// global median instead of guessing.
+// Why a fitted model beats a category median: the median prices every
+// protocol in a category the same, whatever its size, growth or age. The
+// regression lets the market speak on each of those at once, and the
+// holdout says how much of that speech is signal: an out-of-sample R2
+// near zero would mean the features do not predict the multiple at all,
+// and the board would say so instead of hiding it.
 
 export interface SnapshotProtocol {
   slug: string;
@@ -41,42 +46,49 @@ export interface Snapshot {
   watchlist: string[];
 }
 
-export interface ModelConstants {
-  growth_weight: number;
-  growth_floor: number;
-  growth_cap: number;
-  maturity_floor: number;
-  maturity_range: number;
-  maturity_days: number;
-  unknown_age_days: number;
+export interface FitConstants {
+  ridge_lambda: number;
+  train_fraction: number;
+  seed: number;
+  winsor_lo: number;
+  winsor_hi: number;
   multiple_floor: number;
   multiple_cap: number;
-  chain_bonus: number;
-  chain_bonus_max: number;
+  unknown_age_days: number;
+  min_category_peers: number;
+  growth_floor: number;
+  growth_cap: number;
 }
 
-export const MODEL: ModelConstants = {
-  growth_weight: 0.6,
+export const MODEL: FitConstants = {
+  ridge_lambda: 0.0001,
+  train_fraction: 0.8,
+  seed: 20261119,
+  winsor_lo: -2,
+  winsor_hi: 1.3,
+  multiple_floor: 0.02,
+  multiple_cap: 3,
+  unknown_age_days: 365,
+  min_category_peers: 8,
   growth_floor: -60,
   growth_cap: 120,
-  maturity_floor: 0.7,
-  maturity_range: 0.3,
-  maturity_days: 1095,
-  unknown_age_days: 365,
-  multiple_floor: 0.05,
-  multiple_cap: 1.5,
-  chain_bonus: 0.04,
-  chain_bonus_max: 5,
 };
 
-export const MODEL_VERSION = 'radar-2';
-export const EARLY_ROWS = 260;
-export const LIVE_ROWS = 24;
+export const MODEL_VERSION = 'radar-3';
 
 export interface FarmStep {
   text: string;
   cost: string;
   time: string;
+}
+
+export interface ModelContributions {
+  intercept: number;
+  category: number;
+  size: number;
+  growth: number;
+  age: number;
+  chains: number;
 }
 
 export interface BoardRow {
@@ -96,12 +108,12 @@ export interface BoardRow {
   implied_value_usd: number;
   signals: string[];
   model: {
-    category_multiple: number;
-    growth_pct: number;
-    growth_multiplier: number;
-    maturity_multiplier: number;
-    chain_multiplier: number;
+    predicted_multiple: number;
+    log_multiple: number;
+    contributions: ModelContributions;
     age_days: number | null;
+    plan_cost_usd: number;
+    plan_days: number;
   };
   farm_steps: string[];
 }
@@ -119,13 +131,14 @@ export interface RadarRow {
   age_days: number | null;
   implied_value_usd: number;
   signals: string[];
-  category_multiple: number;
-  growth_multiplier: number;
-  maturity_multiplier: number;
-  chain_multiplier: number;
+  predicted_multiple: number;
+  log_multiple: number;
+  contributions: ModelContributions;
+  plan_cost_usd: number;
+  plan_days: number;
 }
 
-export interface LiveRow {
+export interface AnchorRow {
   slug: string;
   name: string;
   category: string | null;
@@ -133,23 +146,67 @@ export interface LiveRow {
   tvl_usd: number;
   mcap_usd: number | null;
   change_7d: number | null;
+  actual_multiple: number | null;
+  predicted_multiple: number | null;
+  residual_log: number | null;
+  fittable: boolean;
+}
+
+export interface FitResult {
+  features: string[];
+  feature_labels: string[];
+  coefficients: number[];
+  category_dummies: string[];
+  train_n: number;
+  test_n: number;
+  anchors_n: number;
+  age_unknown_n: number;
+  r2_train: number;
+  r2_test: number;
+  r2_final: number;
+  cv_r2_mean: number;
+  cv_r2_folds: number[];
+  median_abs_log_error_test: number;
+  median_error_factor_test: number;
+}
+
+export interface SetAsideRow {
+  slug: string;
+  name: string;
+  category: string | null;
+  tvl_usd: number;
+  reason: string;
+}
+
+export interface KpiStats {
+  board_rows: number;
+  anchors_fitted: number;
+  live_total: number;
+  coverage_total: number;
+  coverage_accounted: number;
+  top_implied_usd: number;
+  median_predicted_multiple: number;
+  set_aside_count: number;
 }
 
 export interface RadarData {
   as_of: string;
   source: string;
   floor_usd: number;
-  model: ModelConstants;
+  model: FitConstants;
   model_version: string;
+  fit: FitResult;
+  kpis: KpiStats;
   watchlist_size: number;
   board_size: number;
   early_size: number;
-  live_size: number;
+  anchors_size: number;
   category_multiples: Record<string, number>;
   global_multiple: number;
   category_stats: CategoryStat[];
   rows: RadarRow[];
-  live: LiveRow[];
+  anchors: AnchorRow[];
+  set_aside: SetAsideRow[];
 }
 
 export class SnapshotError extends Error {
@@ -188,121 +245,292 @@ export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && p.gecko_id === null && p.symbol === null;
 }
 
-const VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
-const WRAPPED_CATEGORIES = new Set([
-  'Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC', 'CEX',
-]);
-
-export function isRankable(p: SnapshotProtocol): boolean {
-  return isPreToken(p) && p.category !== 'CEX' && !VERSIONED.test(p.name);
+export function isFittable(p: SnapshotProtocol): boolean {
+  return !isPreToken(p) && p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0 && p.category !== null;
 }
 
-// Median market-cap/TVL per category, read off the live-token protocols.
-// A category with fewer than 3 live peers falls back to the global median.
-export function categoryMultiples(
-  protocols: SnapshotProtocol[],
-  model: ModelConstants,
-): { byCategory: Record<string, number>; global: number } {
-  const byCat = new Map<string, number[]>();
-  const all: number[] = [];
-  for (const p of protocols) {
-    if (isPreToken(p) || p.mcap_usd === null || p.tvl_usd <= 0 || !p.category) continue;
-    const ratio = p.mcap_usd / p.tvl_usd;
-    if (!Number.isFinite(ratio) || ratio <= 0) continue;
-    all.push(ratio);
-    const list = byCat.get(p.category) ?? [];
-    list.push(ratio);
-    byCat.set(p.category, list);
+// Deterministic shuffle: the same snapshot always splits the same way,
+// so both program runs, and the dashboard's numbers, agree exactly.
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const LOG_AGE_REF = Math.log10(366);
+
+export function featureNames(dummies: string[]): string[] {
+  return ['intercept', 'size', 'growth', 'age', 'age_unknown', 'chains', ...dummies.map((d) => `cat:${d}`)];
+}
+
+export function featureLabels(dummies: string[]): string[] {
+  return ['Intercept', 'log10(TVL) - 8', '7d growth / 100', 'log10(age + 1) - log10(366)', 'Age unknown', 'log10(chains)', ...dummies.map((d) => `Category: ${d}`)];
+}
+
+export function featuresFor(
+  p: SnapshotProtocol,
+  asOf: string,
+  model: FitConstants,
+  dummies: string[],
+): number[] {
+  const age = ageDays(asOf, p.listed_at);
+  const ageForModel = age ?? model.unknown_age_days;
+  const x: number[] = [
+    1,
+    Math.log10(Math.max(1, p.tvl_usd)) - 8,
+    clamp(finite(p.change_7d, 0), model.growth_floor, model.growth_cap) / 100,
+    Math.log10(Math.max(0, ageForModel) + 1) - LOG_AGE_REF,
+    p.listed_at === null ? 1 : 0,
+    Math.log10(Math.max(1, p.chains.length)),
+  ];
+  for (const d of dummies) x.push(p.category === d ? 1 : 0);
+  return x;
+}
+
+function dot(a: number[], b: number[]): number {
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i]! * b[i]!;
+  return s;
+}
+
+// Solve A x = b by Gaussian elimination with partial pivoting. A is the
+// small ridge-regularized normal-equations matrix, so this is exact
+// enough and, unlike any iterative solver, bit-for-bit deterministic.
+function solveLinear(a: number[][], b: number[]): number[] {
+  const n = b.length;
+  const m = a.map((row, i) => [...row, b[i]!]);
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(m[r]![col]!) > Math.abs(m[pivot]![col]!)) pivot = r;
+    const tmp = m[col]!;
+    m[col] = m[pivot]!;
+    m[pivot] = tmp;
+    const diag = m[col]![col]!;
+    if (diag === 0) throw new SnapshotError('the fitted model is singular');
+    for (let r = col + 1; r < n; r++) {
+      const factor = m[r]![col]! / diag;
+      for (let c = col; c <= n; c++) m[r]![c] = m[r]![c]! - factor * m[col]![c]!;
+    }
   }
-  const global = clamp(median(all), model.multiple_floor, model.multiple_cap);
+  const x = new Array<number>(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = m[r]![n]!;
+    for (let c = r + 1; c < n; c++) s -= m[r]![c]! * x[c]!;
+    x[r] = s / m[r]![r]!;
+  }
+  return x;
+}
+
+function ols(x: number[][], y: number[], lambda: number): number[] {
+  const k = x[0]!.length;
+  const ata: number[][] = Array.from({ length: k }, () => new Array<number>(k).fill(0));
+  const aty = new Array<number>(k).fill(0);
+  for (let i = 0; i < x.length; i++) {
+    for (let a = 0; a < k; a++) {
+      aty[a] = aty[a]! + x[i]![a]! * y[i]!;
+      for (let b = 0; b < k; b++) ata[a]![b] = ata[a]![b]! + x[i]![a]! * x[i]![b]!;
+    }
+  }
+  for (let a = 0; a < k; a++) ata[a]![a] = ata[a]![a]! + lambda;
+  return solveLinear(ata, aty);
+}
+
+function rSquared(actual: number[], predicted: number[]): number {
+  const mean = actual.reduce((s, v) => s + v, 0) / actual.length;
+  let ssTot = 0;
+  let ssRes = 0;
+  for (let i = 0; i < actual.length; i++) {
+    ssTot += (actual[i]! - mean) ** 2;
+    ssRes += (actual[i]! - predicted[i]!) ** 2;
+  }
+  return ssTot === 0 ? 0 : 1 - ssRes / ssTot;
+}
+
+export function fitModel(
+  protocols: SnapshotProtocol[],
+  asOf: string,
+  model: FitConstants = MODEL,
+): { fit: FitResult; predict: (p: SnapshotProtocol) => { multiple: number; logMultiple: number; contributions: ModelContributions } } {
+  const anchors = protocols.filter(isFittable);
+  const counts = new Map<string, number>();
+  for (const p of anchors) counts.set(p.category!, (counts.get(p.category!) ?? 0) + 1);
+  const dummies = [...counts.entries()]
+    .filter(([, n]) => n >= model.min_category_peers)
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .map(([c]) => c);
+  const rows = anchors.map((p) => ({
+    p,
+    x: featuresFor(p, asOf, model, dummies),
+    y: clamp(Math.log10(p.mcap_usd! / p.tvl_usd), model.winsor_lo, model.winsor_hi),
+  }));
+  const order = rows.map((_, i) => i);
+  const rand = mulberry32(model.seed);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const t = order[i]!;
+    order[i] = order[j]!;
+    order[j] = t;
+  }
+  const trainCount = Math.max(1, Math.floor(order.length * model.train_fraction));
+  const trainIdx = order.slice(0, trainCount);
+  const testIdx = order.slice(trainCount);
+  const betaTrain = ols(trainIdx.map((i) => rows[i]!.x), trainIdx.map((i) => rows[i]!.y), model.ridge_lambda);
+  const betaFinal = ols(rows.map((r) => r.x), rows.map((r) => r.y), model.ridge_lambda);
+  const trainPred = trainIdx.map((i) => dot(rows[i]!.x, betaTrain));
+  const testPred = testIdx.map((i) => dot(rows[i]!.x, betaTrain));
+  const finalPred = rows.map((r) => dot(r.x, betaFinal));
+  const testAbs = testIdx.map((i, k) => Math.abs(rows[i]!.y - testPred[k]!)).sort((a, b) => a - b);
+  const medianAbs = median(testAbs);
+  // Five-fold cross-validation on the same seeded order: each fold is
+  // scored by a model that never saw it, so the mean is the honest
+  // estimate of what the features predict. A single holdout can flatter.
+  const cvR2: number[] = [];
+  for (let fold = 0; fold < 5; fold++) {
+    const te = order.filter((_, i) => i % 5 === fold);
+    const tr = order.filter((_, i) => i % 5 !== fold);
+    const betaFold = ols(tr.map((i) => rows[i]!.x), tr.map((i) => rows[i]!.y), model.ridge_lambda);
+    cvR2.push(rSquared(te.map((i) => rows[i]!.y), te.map((i) => dot(rows[i]!.x, betaFold))));
+  }
+  const cvMean = cvR2.reduce((s, v) => s + v, 0) / cvR2.length;
+  const fit: FitResult = {
+    features: featureNames(dummies),
+    feature_labels: featureLabels(dummies),
+    coefficients: betaFinal,
+    category_dummies: dummies,
+    train_n: trainIdx.length,
+    test_n: testIdx.length,
+    anchors_n: anchors.length,
+    age_unknown_n: anchors.filter((p) => p.listed_at === null).length,
+    r2_train: rSquared(trainIdx.map((i) => rows[i]!.y), trainPred),
+    r2_test: rSquared(testIdx.map((i) => rows[i]!.y), testPred),
+    r2_final: rSquared(rows.map((r) => r.y), finalPred),
+    cv_r2_mean: cvMean,
+    cv_r2_folds: cvR2,
+    median_abs_log_error_test: medianAbs,
+    median_error_factor_test: 10 ** medianAbs,
+  };
+  const predict = (p: SnapshotProtocol) => {
+    const x = featuresFor(p, asOf, model, dummies);
+    const beta = betaFinal;
+    const catIndex = 6 + dummies.indexOf(p.category ?? '');
+    const contributions: ModelContributions = {
+      intercept: beta[0]!,
+      category: catIndex >= 6 && dummies.includes(p.category ?? '') ? beta[catIndex]! : 0,
+      size: beta[1]! * x[1]!,
+      growth: beta[2]! * x[2]!,
+      age: beta[3]! * x[3]! + beta[4]! * x[4]!,
+      chains: beta[5]! * x[5]!,
+    };
+    const logMultiple = dot(x, beta);
+    const multiple = clamp(10 ** logMultiple, model.multiple_floor, model.multiple_cap);
+    return { multiple, logMultiple, contributions };
+  };
+  return { fit, predict };
+}
+
+export function categoryMultiplesFromFit(
+  fit: FitResult,
+  categories: string[],
+  model: FitConstants = MODEL,
+): { byCategory: Record<string, number>; global: number } {
+  const intercept = fit.coefficients[0]!;
+  const global = clamp(10 ** intercept, model.multiple_floor, model.multiple_cap);
   const byCategory: Record<string, number> = {};
-  for (const [cat, values] of byCat) {
-    byCategory[cat] = values.length >= 3
-      ? clamp(median(values), model.multiple_floor, model.multiple_cap)
-      : global;
+  for (const c of categories) {
+    const idx = fit.category_dummies.indexOf(c);
+    const cat = idx >= 0 ? fit.coefficients[6 + idx]! : 0;
+    byCategory[c] = clamp(10 ** (intercept + cat), model.multiple_floor, model.multiple_cap);
   }
   return { byCategory, global };
-}
-
-export function multipleFor(
-  p: SnapshotProtocol,
-  multiples: { byCategory: Record<string, number>; global: number },
-): number {
-  if (p.category && multiples.byCategory[p.category] !== undefined) return multiples.byCategory[p.category]!;
-  return multiples.global;
-}
-
-export function impliedValue(
-  protocol: SnapshotProtocol,
-  asOf: string,
-  model: ModelConstants,
-  multiples: { byCategory: Record<string, number>; global: number },
-): { implied: number; catMult: number; growthPct: number; growthMult: number; maturityMult: number; chainMult: number; age: number | null } {
-  const age = ageDays(asOf, protocol.listed_at);
-  const catMult = multipleFor(protocol, multiples);
-  const growthPct = clamp(finite(protocol.change_7d, 0), model.growth_floor, model.growth_cap);
-  const growthMult = 1 + (growthPct / 100) * model.growth_weight;
-  const ageForModel = age ?? model.unknown_age_days;
-  const maturityMult = model.maturity_floor + (Math.min(Math.max(ageForModel, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
-  const chainMult = 1 + model.chain_bonus * Math.min(Math.max(protocol.chains.length - 1, 0), model.chain_bonus_max);
-  const implied = Math.max(1, Math.round(protocol.tvl_usd * catMult * growthMult * maturityMult * chainMult));
-  return { implied, catMult, growthPct, growthMult, maturityMult, chainMult, age };
 }
 
 function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
   return new Map(protocols.map((p) => [p.slug, p]));
 }
 
-const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
+const VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
+const SET_ASIDE_CATEGORIES = new Set([
+  'CEX', 'Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC',
+]);
 
-export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): BoardRow[] {
-  const multiples = categoryMultiples(snapshot.protocols, model);
+// Why some pre-token rows are set aside instead of scored: the board is a
+// ranking of protocols that could plausibly launch a token. An exchange's
+// TVL is custodial balances, a bridge's TVL is assets locked in transit,
+// and a liquid-staking receipt is an asset repackaged, not a protocol
+// awaiting a token — scoring them by TVL would put Robinhood and wrapped
+// bitcoin at the top of a token-launch board. The rule is by category,
+// applied to every row alike, and every set-aside row is listed on the
+// dashboard with its reason, so nothing is hidden.
+export function setAsideReason(p: SnapshotProtocol): string | null {
+  if (p.category !== null && SET_ASIDE_CATEGORIES.has(p.category)) {
+    if (p.category === 'CEX') return 'an exchange: its TVL is custodial balances, not protocol TVL';
+    if (p.category === 'Bridge' || p.category === 'Canonical Bridge') return 'a bridge: its TVL is assets locked in transit, not a protocol awaiting a token';
+    return 'a staked receipt: a repackaged asset, not a protocol awaiting a token';
+  }
+  if (VERSIONED.test(p.name)) return 'a versioned deployment of a protocol, not a standalone launch';
+  return null;
+}
+
+export function buildBoard(
+  snapshot: Snapshot,
+  predict: (p: SnapshotProtocol) => { multiple: number; logMultiple: number; contributions: ModelContributions },
+  model: FitConstants = MODEL,
+): BoardRow[] {
   const index = bySlug(snapshot.protocols);
   const chosen = new Map<string, SnapshotProtocol>();
   for (const slug of snapshot.watchlist) {
     const p = index.get(slug);
     if (p !== undefined) chosen.set(slug, p);
   }
-  // Early radar: pre-token protocols below the floor, by TVL. Wrapped and
-  // staked products are left out here the same way the watchlist leaves
-  // them out: they are usually a token that already trades, repackaged.
-  const early = snapshot.protocols
-    .filter((p) => !chosen.has(p.slug) && isRankable(p) && p.tvl_usd < snapshot.floor_usd && !(p.category !== null && WRAPPED_CATEGORIES.has(p.category)))
-    .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0))
-    .slice(0, EARLY_ROWS);
-  for (const p of early) chosen.set(p.slug, p);
+  // The board is the watchlist plus every pre-token protocol that is a
+  // plausible launch candidate. The set-aside rule above keeps exchanges,
+  // bridges and staked receipts off it; the watchlist itself has none of
+  // those categories, so the floor is unaffected.
+  for (const p of snapshot.protocols) {
+    if (isPreToken(p) && setAsideReason(p) === null) chosen.set(p.slug, p);
+  }
 
   const scored = [...chosen.values()].map((p) => {
-    const v = impliedValue(p, snapshot.as_of, model, multiples);
-    return { p, ...v };
+    const age = ageDays(snapshot.as_of, p.listed_at);
+    const v = predict(p);
+    const implied = Math.max(1, Math.round(p.tvl_usd * v.multiple));
+    return { p, age, implied, ...v };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
-  return scored.map((s, i) => ({
-    rank: i + 1,
-    slug: s.p.slug,
-    name: s.p.name,
-    category: s.p.category,
-    chains: s.p.chains,
-    tvl_usd: s.p.tvl_usd,
-    change_7d: s.p.change_7d,
-    mcap_usd: s.p.mcap_usd,
-    listed_at: s.p.listed_at,
-    gecko_id: s.p.gecko_id,
-    symbol: s.p.symbol,
-    token_status: 'pre-token',
-    age_days: s.age,
-    implied_value_usd: s.implied,
-    signals: signalsFor(s.p, s.age),
-    model: {
-      category_multiple: s.catMult,
-      growth_pct: s.growthPct,
-      growth_multiplier: round4(s.growthMult),
-      maturity_multiplier: round4(s.maturityMult),
-      chain_multiplier: round4(s.chainMult),
+  return scored.map((s, i) => {
+    const plan = planCostFor(s.p, s.age);
+    return {
+      rank: i + 1,
+      slug: s.p.slug,
+      name: s.p.name,
+      category: s.p.category,
+      chains: s.p.chains,
+      tvl_usd: s.p.tvl_usd,
+      change_7d: s.p.change_7d,
+      mcap_usd: s.p.mcap_usd,
+      listed_at: s.p.listed_at,
+      gecko_id: s.p.gecko_id,
+      symbol: s.p.symbol,
+      token_status: 'pre-token' as const,
       age_days: s.age,
-    },
-    farm_steps: farmSteps(s.p, s.age).map(stepText),
-  }));
+      implied_value_usd: s.implied,
+      signals: signalsFor(s.p, s.age),
+      model: {
+        predicted_multiple: s.multiple,
+        log_multiple: s.logMultiple,
+        contributions: s.contributions,
+        age_days: s.age,
+        plan_cost_usd: plan.cost,
+        plan_days: plan.days,
+      },
+      farm_steps: farmSteps(s.p, s.age).map(stepText),
+    };
+  });
 }
 
 export function stepText(step: FarmStep): string {
@@ -310,6 +538,15 @@ export function stepText(step: FarmStep): string {
   if (s.length > 600) s = `${s.slice(0, 596)}...`;
   if (s.length < 20) s = `${s} Hold the position and check the protocol's own page.`;
   return s;
+}
+
+export function planCostFor(p: SnapshotProtocol, age: number | null): { cost: number; days: number } {
+  const capital = capitalFor(p);
+  const hold = holdDaysFor(age);
+  const weekly = Math.ceil(hold / 7);
+  let cost = 3 + (capital >= 150 ? 8 : 4) + 2 * weekly + 4;
+  if (p.chains.length > 1) cost += 4;
+  return { cost, days: hold };
 }
 
 function chainOf(p: SnapshotProtocol): string {
@@ -391,20 +628,31 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): FarmStep[] {
   return steps;
 }
 
-export function liveRows(snapshot: Snapshot): LiveRow[] {
-  return snapshot.protocols
-    .filter((p) => !isPreToken(p) && p.category !== 'CEX')
+export function anchorRows(
+  snapshot: Snapshot,
+  predict: (p: SnapshotProtocol) => { multiple: number; logMultiple: number; contributions: ModelContributions },
+): AnchorRow[] {
+  const live = snapshot.protocols.filter((p) => !isPreToken(p));
+  return live
     .sort((a, b) => (b.mcap_usd ?? 0) - (a.mcap_usd ?? 0) || b.tvl_usd - a.tvl_usd)
-    .slice(0, LIVE_ROWS)
-    .map((p) => ({
-      slug: p.slug,
-      name: p.name,
-      category: p.category,
-      chains: p.chains,
-      tvl_usd: p.tvl_usd,
-      mcap_usd: p.mcap_usd,
-      change_7d: p.change_7d,
-    }));
+    .map((p) => {
+      const fittable = isFittable(p);
+      const actual = fittable ? p.mcap_usd! / p.tvl_usd : null;
+      const pred = fittable ? predict(p) : null;
+      return {
+        slug: p.slug,
+        name: p.name,
+        category: p.category,
+        chains: p.chains,
+        tvl_usd: p.tvl_usd,
+        mcap_usd: p.mcap_usd,
+        change_7d: p.change_7d,
+        actual_multiple: actual === null ? null : Math.round(actual * 1e4) / 1e4,
+        predicted_multiple: pred === null ? null : pred.multiple,
+        residual_log: pred === null || actual === null ? null : Math.log10(actual) - Math.log10(pred.multiple),
+        fittable,
+      };
+    });
 }
 
 export function radarRow(row: BoardRow): RadarRow {
@@ -421,34 +669,62 @@ export function radarRow(row: BoardRow): RadarRow {
     age_days: row.age_days,
     implied_value_usd: row.implied_value_usd,
     signals: row.signals,
-    category_multiple: row.model.category_multiple,
-    growth_multiplier: row.model.growth_multiplier,
-    maturity_multiplier: row.model.maturity_multiplier,
-    chain_multiplier: row.model.chain_multiplier,
+    predicted_multiple: row.model.predicted_multiple,
+    log_multiple: row.model.log_multiple,
+    contributions: row.model.contributions,
+    plan_cost_usd: row.model.plan_cost_usd,
+    plan_days: row.model.plan_days,
   };
 }
 
-export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
-  const board = buildBoard(snapshot, model);
-  const live = liveRows(snapshot);
-  const multiples = categoryMultiples(snapshot.protocols, model);
+export function buildRadar(snapshot: Snapshot, model: FitConstants = MODEL): { board: BoardRow[]; radar: RadarData } {
+  const { fit, predict } = fitModel(snapshot.protocols, snapshot.as_of, model);
+  const board = buildBoard(snapshot, predict, model);
+  const anchors = anchorRows(snapshot, predict);
+  const boardSlugs = new Set(board.map((r) => r.slug));
+  const setAside: SetAsideRow[] = snapshot.protocols
+    .filter((p) => isPreToken(p) && !boardSlugs.has(p.slug))
+    .map((p) => ({
+      slug: p.slug,
+      name: p.name,
+      category: p.category,
+      tvl_usd: p.tvl_usd,
+      reason: setAsideReason(p) ?? 'not a launch candidate',
+    }))
+    .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : 1));
+  const categories = Array.from(new Set(board.map((r) => r.category ?? 'Other')));
+  const multiples = categoryMultiplesFromFit(fit, categories, model);
   const stats = categoryStats(board, multiples);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
+  const topImplied = board.length > 0 ? board[0]!.implied_value_usd : 0;
+  const kpis: KpiStats = {
+    board_rows: board.length,
+    anchors_fitted: fit.anchors_n,
+    live_total: anchors.length,
+    coverage_total: snapshot.protocols.length,
+    coverage_accounted: board.length + anchors.length + setAside.length,
+    top_implied_usd: topImplied,
+    median_predicted_multiple: median(board.map((r) => r.model.predicted_multiple)),
+    set_aside_count: setAside.length,
+  };
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
     floor_usd: snapshot.floor_usd,
     model,
     model_version: MODEL_VERSION,
+    fit,
+    kpis,
     watchlist_size: snapshot.watchlist.length,
     board_size: board.length,
     early_size: early,
-    live_size: live.length,
+    anchors_size: anchors.length,
     category_multiples: multiples.byCategory,
     global_multiple: multiples.global,
     category_stats: stats,
     rows: board.map(radarRow),
-    live,
+    anchors,
+    set_aside: setAside,
   };
   return { board, radar };
 }

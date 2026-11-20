@@ -1,4 +1,4 @@
-# Token Radar, radar-7: method
+# Token Radar, radar-8: method
 
 ## The model
 

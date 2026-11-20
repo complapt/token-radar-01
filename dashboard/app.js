@@ -1,7 +1,5 @@
-// Token Radar's dashboard (radar-7). It reads window.RADAR, written beside
-// dashboard/ by main.ts, and renders the ranked board, a filterable table,
-// a per-protocol detail view with the fitted model's own inputs and the
-// protocol's farm plan, plus the live-token anchors that fitted the model.
+// Token Radar's dashboard (radar-8): the ranked board, filterable table,
+// per-protocol detail view and live-token anchors, from window.RADAR.
 // No network: every byte it shows is in data.js.
 (function () {
   'use strict';
@@ -9,11 +7,12 @@
   var DATA = window.RADAR;
   if (!DATA) return;
   var app = document.getElementById('board');
-  var theme = 'light';
+  var theme = 'dark';
   try {
     var saved = window.localStorage.getItem('token-radar-theme');
-    if (saved === 'dark' || saved === 'light') theme = saved;
-  } catch (e) { /* private mode: stay on the light default */ }
+    if (saved === 'light') { theme = 'cream'; window.localStorage.setItem('token-radar-theme', 'cream'); }
+    else if (saved === 'cream' || saved === 'dark') theme = saved;
+  } catch (e) { /* private mode */ }
   document.documentElement.setAttribute('data-theme', theme);
   function setTheme(next) {
     theme = next;
@@ -24,6 +23,7 @@
     if (btn) btn.focus();
   }
   var state = { q: '', category: 'all', chain: 'all', tab: 'pre-token', sort: 'implied', dir: -1, selected: null, signal: 'all', verdict: 'all', anchorSort: 'residual', anchorDir: -1 };
+  var quadSeen = false;
 
   var usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
   function fmtUsd(n) {
@@ -50,17 +50,12 @@
   function impliedOf(row, model) {
     var c = row.contributions;
     var logMult = c.intercept + c.category + c.size + c.growth;
-    var mult = Math.min(model.multiple_cap, Math.max(model.multiple_floor, Math.pow(10, logMult)));
+    var mult = Math.min(model.multiple_cap, Math.max(model.multiple_floor, 10 ** logMult));
     return Math.max(1, Math.round(row.tvl_usd * mult));
   }
   function fmtLog(n) {
     if (n === null || n === undefined || !isFinite(n)) return 'n/a';
     return (n > 0 ? '+' : '') + n.toFixed(2);
-  }
-  function fmtFactor(n) {
-    if (n === null || n === undefined || !isFinite(n)) return 'n/a';
-    if (n >= 1) return 'x' + n.toFixed(2);
-    return '÷' + (1 / n).toFixed(2);
   }
 
   function el(tag, attrs) {
@@ -84,31 +79,11 @@
     return node;
   }
 
-  // Short builders for plain table cells: th(t) is a column header, and
-  // cell(c, t) is a data cell with class c (or no class when c is '').
   function th(t) { return el('th', { scope: 'col', text: t }); }
   function cell(c, t) { return el('td', c ? { class: c, text: t } : { text: t }); }
   function sub(t) { return el('p', { class: 'sub', text: t }); }
   function h3(t) { return el('h3', { text: t }); }
 
-  // The farm plan mirrors board.json: category, chains, TVL and age
-  // decide the action, the capital, the hold and every cost and time.
-  // No name is special-cased.
-  function chainOf(p) { return p.chains && p.chains.length > 0 ? p.chains[0] : 'its main chain'; }
-  function capitalFor(p) {
-    if (p.tvl_usd >= 5e9) return 250;
-    if (p.tvl_usd >= 1e9) return 150;
-    if (p.tvl_usd >= 1e8) return 100;
-    return 50;
-  }
-  function holdDaysFor(age) {
-    if (age === null || age === undefined) return 30;
-    if (age < 180) return 60;
-    if (age < 365) return 45;
-    return 30;
-  }
-  // One action template per category family: {C} is the capital, {N} the
-  // protocol name, {H} the chain. First matching family wins, as before.
   var ACTS = [
     [['lend', 'cdp', 'collateral'], 'Lend ${C} of USDC on {N} ({H}) and leave the deposit earning.'],
     [['dex', 'yield', 'leveraged farm', 'farm'], 'Add ${C} of liquidity to the main pool of {N} on {H} and keep it staked.'],
@@ -123,26 +98,22 @@
     [['index'], 'Buy ${C} of the {N} index on {H} and hold it.'],
     [['privacy'], 'Shield ${C} through {N} on {H} and keep the shielded balance.']
   ];
-  function actionFor(p, capital, chain) {
+  function farmSteps(p) {
+    var chain = p.chains && p.chains.length ? p.chains[0] : 'its main chain';
+    var capital = p.tvl_usd >= 5e9 ? 250 : p.tvl_usd >= 1e9 ? 150 : p.tvl_usd >= 1e8 ? 100 : 50;
+    var hold = p.age_days === null || p.age_days === undefined ? 30 : p.age_days < 180 ? 60 : p.age_days < 365 ? 45 : 30;
+    var gas = capital >= 150 ? 8 : 4;
     var c = (p.category || '').toLowerCase();
-    for (var i = 0; i < ACTS.length; i++) {
-      var ks = ACTS[i][0];
-      for (var j = 0; j < ks.length; j++) {
-        if (c.indexOf(ks[j]) >= 0) return ACTS[i][1].split('{C}').join(capital).split('{N}').join(p.name).split('{H}').join(chain);
+    var action = null;
+    for (var i = 0; i < ACTS.length && !action; i++) {
+      for (var j = 0; j < ACTS[i][0].length; j++) {
+        if (c.indexOf(ACTS[i][0][j]) >= 0) { action = ACTS[i][1].split('{C}').join(capital).split('{N}').join(p.name).split('{H}').join(chain); break; }
       }
     }
-    return 'Put $' + capital + ' of USDC to work in ' + p.name + ' on ' + chain + ' and leave the position open.';
-  }
-  // Steps are plain strings now: each one is the board's text plus its
-  // cost and time, so the dialog shows exactly what board.json carries.
-  function farmSteps(p) {
-    var chain = chainOf(p);
-    var capital = capitalFor(p);
-    var hold = holdDaysFor(p.age_days);
-    var gas = capital >= 150 ? 8 : 4;
+    if (!action) action = 'Put $' + capital + ' of USDC to work in ' + p.name + ' on ' + chain + ' and leave the position open.';
     var steps = [
       'Start with a wallet used only for farming, funded with $' + (capital + 20) + ', and store its recovery phrase offline. Cost: about $3 of gas to fund it. Time: 10 minutes.',
-      actionFor(p, capital, chain) + ' Cost: $' + capital + ' of capital plus roughly $' + gas + ' of gas. Time: 15 minutes to open.',
+      action + ' Cost: $' + capital + ' of capital plus roughly $' + gas + ' of gas. Time: 15 minutes to open.',
       'Do one real action every week on ' + p.name + ', such as a deposit, a swap, a borrow or a vote, so the wallet shows repeated use. Cost: about $2 of gas per week. Time: 10 minutes a week.',
       'Keep the position open for at least ' + hold + ' days, so the activity spans more than one snapshot window. Cost: the $' + capital + ' stays locked in the position. Time: ' + hold + ' days.',
       'When a token or points page appears, claim only through the link the protocol itself publishes, and never pay anyone to claim for you. Cost: no fee to check; gas only if you claim. Time: 10 minutes.',
@@ -152,7 +123,6 @@
     return steps;
   }
 
-  // Shared by the KPI strip and the model panel validation table.
   function validationRows() {
     var f = DATA.fit;
     return [
@@ -164,7 +134,6 @@
     ];
   }
 
-  // Intercept is identical for every row, so it cannot explain a rank.
   function largestDriver(c) {
     var ds = [['category', c.category], ['size', c.size], ['growth', c.growth]];
     ds.sort(function (a, b) { return Math.abs(b[1]) - Math.abs(a[1]); });
@@ -173,9 +142,9 @@
 
   function readHash() {
     var params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-    [['q', 'q'], ['p', 'selected'], ['category', 'category'], ['chain', 'chain'], ['signal', 'signal'], ['verdict', 'verdict'], ['tab', 'tab']].forEach(function (kv) {
+    [['q'], ['p', 'selected'], ['category'], ['chain'], ['signal'], ['verdict'], ['tab']].forEach(function (kv) {
       var v = params.get(kv[0]);
-      if (v) state[kv[1]] = v;
+      if (v) state[kv[1] || kv[0]] = v;
     });
   }
   function writeHash() {
@@ -231,7 +200,6 @@
     return 'Skip';
   }
 
-  // A table row that opens its detail view on click, Enter or Space.
   function rowAttrs(slug) {
     return {
       tabindex: '0',
@@ -247,7 +215,7 @@
         el('span', { text: 'Snapshot ' + DATA.as_of }),
         el('span', { text: 'DefiLlama protocol index' }),
         el('span', { text: DATA.model_version + ' model' }),
-        el('button', { class: 'button', type: 'button', 'aria-pressed': theme === 'dark' ? 'true' : 'false', 'aria-label': theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme', text: theme === 'dark' ? 'Light theme' : 'Dark theme', onclick: function () { setTheme(theme === 'dark' ? 'light' : 'dark'); } })
+        el('button', { class: 'button', type: 'button', 'aria-pressed': theme === 'dark' ? 'true' : 'false', 'aria-label': theme === 'dark' ? 'Switch to cream theme' : 'Switch to dark theme', text: theme === 'dark' ? 'Cream theme' : 'Dark theme', onclick: function () { setTheme(theme === 'dark' ? 'cream' : 'dark'); } })
       )
     );
   }
@@ -320,8 +288,6 @@
     );
   }
 
-  // One filter dropdown: id, accessible label, the "all" option, the list,
-  // the current value and a setter for the changed value.
   function sel(id, label, all, list, cur, set) {
     var s = el('select', { id: id, 'aria-label': label },
       el('option', { value: 'all', text: all }),
@@ -331,7 +297,6 @@
     return s;
   }
 
-  // One toggle button in a tab group: label, pressed state, click action.
   function tab(t, on, fn) { return el('button', { type: 'button', 'aria-pressed': on ? 'true' : 'false', text: t, onclick: fn }); }
 
   function controls() {
@@ -358,8 +323,6 @@
     );
   }
 
-  // A sortable column header: label, whether it is the active sort, its
-  // direction, whether it is numeric, and what a click does.
   function shead(label, active, dir, num, fn) {
     var attrs = { scope: 'col' };
     if (num) attrs.class = 'num';
@@ -454,7 +417,7 @@
     });
     var tbody = el('tbody');
     list.forEach(function (r) {
-      var resid = r.residual_log === null ? 'n/a' : fmtFactor(Math.pow(10, r.residual_log));
+      var resid = r.residual_log === null ? 'n/a' : r.residual_log >= 0 ? 'x' + Math.pow(10, r.residual_log).toFixed(2) : '÷' + Math.pow(10, -r.residual_log).toFixed(2);
       var residClass = r.residual_log === null ? '' : r.residual_log >= 0 ? 'pos' : 'neg';
       tbody.appendChild(el('tr', null,
         el('td', null, el('div', { class: 'name' }, el('b', { text: r.name }), el('span', { class: 'sub', text: (r.category || 'Other') + ' on ' + (r.chains && r.chains.length ? r.chains.slice(0, 2).join(', ') : 'an unnamed chain') }))),
@@ -620,7 +583,6 @@
     lastTrigger = null;
   });
 
-  // One row of the detail view's value equation: a label and its number.
   function eq(l, v) { return el('div', null, el('span', { text: l }), el('b', { class: 'num', text: v })); }
 
   function openDetail(slug, trigger) {
@@ -703,24 +665,25 @@
 
   function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
-  // Quadrant map: the top 40 rows by expected value, plotted by launch
-  // odds (x) against implied value on a log scale (y). Bubble size is TVL,
-  // colour is verdict, and the zone lines sit at the plotted medians.
-  // A bubble opens the same detail view as its table row.
   function quadrant() {
-    var top = DATA.rows.slice().sort(function (a, b) { return b.expected_value_usd - a.expected_value_usd; }).slice(0, 40);
+    var byEv = DATA.rows.slice().sort(function (a, b) { return b.expected_value_usd - a.expected_value_usd; });
+    var top = byEv.slice(0, 39);
+    var marg = byEv.filter(function (r) { return r.verdict === 'marginal'; })[0] || null;
+    var added = !!(marg && top.indexOf(marg) < 0);
+    if (added) top.push(marg);
+    top.sort(function (a, b) { return b.tvl_usd - a.tvl_usd; });
     var W = 520, H = 340, L = 58, R = 12, T = 16, B = 38, pw = W - L - R, ph = H - T - B;
     var vals = top.map(function (r) { return r.implied_value_usd; });
-    var lo = Math.pow(10, Math.floor(Math.log10(Math.min.apply(null, vals))));
-    var hi = Math.pow(10, Math.ceil(Math.log10(Math.max.apply(null, vals))));
+    var lo = 10 ** Math.floor(Math.log10(Math.min(...vals)));
+    var hi = 10 ** Math.ceil(Math.log10(Math.max(...vals)));
     var odds = top.map(function (r) { return r.launch_odds; }).sort(function (a, b) { return a - b; });
     var logs = top.map(function (r) { return Math.log10(r.implied_value_usd); }).sort(function (a, b) { return a - b; });
-    var medO = (odds[19] + odds[20]) / 2;
-    var medV = Math.pow(10, (logs[19] + logs[20]) / 2);
-    var maxTvl = Math.max.apply(null, top.map(function (r) { return r.tvl_usd; }));
+    var n = top.length, mid = Math.floor(n / 2);
+    var medO = n % 2 ? odds[mid] : (odds[mid - 1] + odds[mid]) / 2;
+    var medV = 10 ** (n % 2 ? logs[mid] : (logs[mid - 1] + logs[mid]) / 2);
     function X(o) { return L + o * pw; }
     function Y(v) { return T + ph - (Math.log10(v) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)) * ph; }
-    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Quadrant map of the top 40 protocols by expected value">';
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Quadrant map, top ' + n + ' by expected value"' + (quadSeen ? ' class="settled"' : '') + '><g class="axes">';
     s += '<line class="div" x1="' + X(medO).toFixed(1) + '" y1="' + T + '" x2="' + X(medO).toFixed(1) + '" y2="' + (T + ph) + '" stroke-dasharray="4 4"/>';
     s += '<line class="div" x1="' + L + '" y1="' + Y(medV).toFixed(1) + '" x2="' + (L + pw) + '" y2="' + Y(medV).toFixed(1) + '" stroke-dasharray="4 4"/>';
     [['High value, low odds', 0, 0], ['High value, high odds', 1, 0], ['Low value, low odds', 0, 1], ['Low value, high odds', 1, 1]].forEach(function (z) {
@@ -734,25 +697,29 @@
     }
     s += '<text class="axis-t" x="' + (L + pw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle">Launch odds</text>';
     s += '<text class="axis-t" x="14" y="' + (T + ph / 2).toFixed(1) + '" text-anchor="middle" transform="rotate(-90 14 ' + (T + ph / 2).toFixed(1) + ')">Implied value, log scale</text>';
-    top.forEach(function (r) {
-      var label = r.name + ', implied ' + fmtUsd(r.implied_value_usd) + ', launch odds ' + Math.round(r.launch_odds * 100) + '%, TVL ' + fmtUsd(r.tvl_usd);
-      s += '<circle class="' + r.verdict + '" data-slug="' + r.slug + '" tabindex="0" role="button" aria-label="' + esc(label) + '" cx="' + X(r.launch_odds).toFixed(1) + '" cy="' + Y(r.implied_value_usd).toFixed(1) + '" r="' + (4 + 8 * Math.sqrt(r.tvl_usd / maxTvl)).toFixed(1) + '"><title>' + esc(label) + '</title></circle>';
+    s += '</g>';
+    top.forEach(function (r, i) {
+      var label = r.name + ', implied ' + fmtUsd(r.implied_value_usd) + ', launch odds ' + Math.round(r.launch_odds * 100) + '%, TVL ' + fmtUsd(r.tvl_usd) + ', ' + verdictLabel(r.verdict);
+      var rp = Math.min(42, Math.max(6, 42 * Math.sqrt(r.tvl_usd / top[0].tvl_usd)));
+      s += '<g class="bubble ' + r.verdict + '" style="--x:' + X(r.launch_odds).toFixed(1) + 'px;--y:' + Y(r.implied_value_usd).toFixed(1) + 'px;--d:' + (120 + i * 22) + 'ms" tabindex="0" role="button" aria-label="' + esc(label) + '" data-slug="' + r.slug + '"><circle r="' + rp.toFixed(1) + '"><title>' + esc(label) + '</title></circle></g>';
     });
     s += '</svg>';
     var wrap = el('div', { class: 'qwrap', html: s });
-    var circles = wrap.querySelectorAll('circle[data-slug]');
-    for (var i = 0; i < circles.length; i++) {
-      (function (c) {
-        c.addEventListener('click', function () { openDetail(c.getAttribute('data-slug'), c); });
-        c.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(c.getAttribute('data-slug'), c); } });
-      })(circles[i]);
+    wrap.addEventListener('animationend', function (e) { e.target.style.willChange = 'auto'; });
+    var bs = wrap.querySelectorAll('.bubble');
+    for (var i = 0; i < bs.length; i++) {
+      (function (b) {
+        b.addEventListener('click', function () { openDetail(b.dataset.slug, b); });
+        b.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(b.dataset.slug, b); } });
+      })(bs[i]);
     }
+    quadSeen = true;
     return el('section', { class: 'panel quad', 'aria-label': 'Where value meets odds' },
       el('h2', { text: 'Where value meets odds' }),
       el('p', { class: 'guide', text: 'Farm the top-right quadrant first: high value and high odds.' }),
       wrap,
       el('div', { class: 'legend', html: '<span><span class="dot farm"></span>Farm</span><span><span class="dot marginal"></span>Marginal</span><span><span class="dot skip"></span>Skip</span><span>Bubble size = TVL</span>' }),
-      el('p', { text: 'Top 40 rows by expected value. X is launch odds, Y is implied value on a log scale, bubble size is TVL, colour is verdict. Every plotted row is in the board table.' })
+      el('p', { text: (added ? 'Top 39 by expected value plus ' + marg.name + ', the highest-EV Marginal row. ' : 'Top ' + n + ' by expected value. ') + 'Board: ' + DATA.kpis.farmable_count + ' Farm, ' + DATA.kpis.marginal_count + ' Marginal, ' + DATA.kpis.skip_count + ' Skip. X is launch odds, Y is implied value on a log scale, bubble size is TVL, colour is verdict. Every plotted row is in the board table.' })
     );
   }
 

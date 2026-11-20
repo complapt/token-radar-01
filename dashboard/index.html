@@ -7,24 +7,6 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<!--
-METHOD, radar-5. The board is fitted, not hand-picked. The value model is an
-ordinary least squares fit of log10(market-cap / TVL) on size, seven-day
-growth and a category dummy (Lending, RWA), fitted on 71 dated live-token
-anchors only. Exchanges, bridges and staked receipts are excluded from the
-fit, and 33 priced anchors with no listing date are excluded too. Validation,
-all recomputed from the snapshot: leave-one-out miss x2.92, seeded 80/20
-holdout x2.88 (x2.57 averaged over 10 seeds), walk-forward x2.03 (fitted
-before 2025, tested on 2025+ listings), 50% prediction range holds 53% of
-holdout anchors. Age is NOT in the multiple: adding it made the walk-forward
-miss 12x. Age IS used for launch odds: the share of protocols this old that
-already carry a token (held out 67% accuracy, Brier 0.214, base rate 55%),
-and expected value = implied value x launch odds. Farm plans are costed
-net: 5% airdrop assumption, minus gas and minus lock-up cost; 202 of 203
-rows clear $50/hour net, so the Best farms list and the $500 portfolio,
-ranked by net $/hour, are where farms separate. Ranks carry a 10th-90th
-percentile range from 200 refits. Full method: method.md.
--->
 <a class="skip" href="#board">Skip to the board</a>
 <main id="board" tabindex="-1" aria-busy="true"></main>
 <script src="../data.js"></script>

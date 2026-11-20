@@ -1,4 +1,4 @@
-# Token Radar, radar-5 — method
+# Token Radar, radar-5: method
 
 ## The model
 
@@ -42,7 +42,7 @@ is 15 anchors, so it jumps around.
 
 Age is deliberately **not** in the fitted multiple: adding it made the
 walk-forward miss ×8.50–×12. Age is used where the data supports it:
-**launch odds** — the share of protocols in each age band that already
+**launch odds**, the share of protocols in each age band that already
 carry a token, counted from the snapshot. The 6–12 month and 1–2 year
 bands are pooled at their joint 38.7% (raw shares dip 39.7% then 38.3%;
 odds that fall with age are noise). Held out over ten 80/20 splits, the
@@ -58,7 +58,7 @@ have not launched (Polymarket implied #9, expected #3; Lofty #35, #9).
 The payoff if the token launches is a typical **5% airdrop** of the
 implied value, times the launch odds, minus gas, minus lock-up cost of
 the capital at 4% a year. Farm at $50 net/hour or more, marginal
-$10–$50, skip below $10. The 5% is an assumption — every row prints its
+$10–$50, skip below $10. The 5% is an assumption, every row prints its
 net hourly rate and break-even odds so the verdict can be re-derived
 with a different share. The honest limit: a 5% slice of a tens-of-millions
 implied value dwarfs a $25 gas bill, so 202 of 203 rows are farm and one
@@ -75,6 +75,6 @@ percentile). The top 3 are tight (rank 1 stays #1 in 43% of refits).
 
 Each detail view shows the five nearest live-token protocols by log10
 TVL, same category first, with each one's actual mcap / TVL and the
-median multiple against the model's. The neighbours vary widely — the
+median multiple against the model's. The neighbours vary widely, the
 median and the fitted multiple agree within 20% for only 2 of the top 20
-rows — so the table is a cross-check, not a second valuation.
+rows, so the table is a cross-check, not a second valuation.

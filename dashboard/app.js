@@ -21,8 +21,8 @@
 	}
 	var state = { q: '', category: 'all', chain: 'all', tab: 'pre-token', sort: 'implied', dir: -1, selected: null, signal: 'all', verdict: 'all', anchorSort: 'residual', anchorDir: -1 };
 	var quadSeen = false;
+	var chartSeen = false;
 	var usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-	var usd2 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 	function fmtUsd(n) {
 		if (n === null || n === undefined || !isFinite(n)) return 'n/a';
 		if (Math.abs(n) >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
@@ -267,49 +267,25 @@
 			)
 		);
 	}
-	function farmNext() {
-		var k = D.kpis;
-		var m = D.model;
-		var byNet = D.rows.slice().sort(function(a, b) { return b.net_per_hour_usd - a.net_per_hour_usd; });
+	function evChart() {
 		var byEv = D.rows.slice().sort(function(a, b) { return b.expected_value_usd - a.expected_value_usd; });
-		var evRank = {};
-		byEv.forEach(function(r, i) { evRank[r.slug] = i + 1; });
-		var top = byNet.slice(0, 3);
-		var outside = null;
-		for (var i = 0; i < byNet.length; i++) {
-			if (evRank[byNet[i].slug] > 3) { outside = byNet[i]; break; }
-		}
-		var rows = top.map(function(r) {
-			var a = rowAttrs(r.slug);
-			return el('tr', a,
-				el('td', null,
-					el('div', { class: 'name' },
-						el('b', { text: r.name }),
-						el('span', { class: 'sub', text: (r.category || 'Other') })
-					),
-					el('span', { class: 'sub', text: usd.format(r.farm_ev_usd + r.plan_gas_usd) + ' expected airdrop - ' + usd.format(r.plan_gas_usd) + ' gas - $' + r.plan_lockup_usd.toFixed(2) + ' lockup' })
-				),
-				el('td', null, el('span', { class: 'chip', text: 'EV #' + evRank[r.slug] })),
-				el('td', { class: 'num' },
-					el('b', { class: 'net-num', text: usd2.format(r.net_per_hour_usd) + '/hr' })
-				)
+		var top = byEv.slice(0, 5);
+		var max = top.length ? top[0].expected_value_usd : 1;
+		var rows = top.map(function(r, i) {
+			var pct = Math.max(3, Math.round((r.expected_value_usd / max) * 100));
+			return el('button', { class: 'ev-row' + (i === 0 ? ' top1' : ''), type: 'button', 'aria-label': r.name + ', expected value ' + fmtUsd(r.expected_value_usd) + ', ' + (i + 1) + ' of 5 by expected value', onclick: function(e) { openDetail(r.slug, e.currentTarget); } },
+				el('span', { class: 'ev-rank num', text: String(i + 1) }),
+				el('span', { class: 'ev-name', text: r.name }),
+				el('span', { class: 'ev-track', 'aria-hidden': 'true' }, el('i', { class: 'ev-fill', style: 'width:' + pct + '%;--d:' + (i * 80) + 'ms' })),
+				el('span', { class: 'ev-value num', text: fmtUsd(r.expected_value_usd) })
 			);
 		});
-		return el('section', { class: 'panel farm-next', 'aria-label': 'Best net per hour' },
-			el('h2', { text: 'Best net per hour, after gas and lockup' }),
-			sub('Model estimate. From the ' + D.board_size + ' ranked rows.'),
-			el('div', { class: 'table-wrap' },
-				el('table', { class: 'mult-table' }, el('tbody', null, rows))
-			),
-			sub('Same 3 names as the top of the table, different maths: $/hr after fees, not expected value.'),
-			outside ? sub('Best outside the table\'s top 3 by EV: ' + outside.name + ', ' + usd2.format(outside.net_per_hour_usd) + '/hr (EV #' + evRank[outside.slug] + ').') : null,
-			sub(k.farmable_count + ' Farm · ' + k.marginal_count + ' Marginal · ' + k.skip_count + ' Skip, of ' + D.board_size + ' ranked · ' + fmtUsd(k.total_implied_usd) + ' total implied value · watchlist ' + D.watchlist_size + '/' + D.watchlist_size + '.'),
-			sub('Net = implied x ' + Math.round(m.airdrop_share * 100) + '% airdrop share x launch odds - gas - T-bill lockup, per hour over the plan\'s days. Fitted ' + D.as_of + '. Excludes launch price and airdrop eligibility.'),
-			el('details', { class: 'farm-assume' },
-				el('summary', { text: 'Full assumptions' }),
-				el('ul', { html: '<li>Airdrop share is ' + Math.round(m.airdrop_share * 100) + '% of implied value, assumed, not fitted.</li><li>Launch odds are the share of protocols in each age band that already carry a token.</li><li>Gas and lockup are the plan costs under each rate; lockup is plan capital at ' + Math.round(m.t_bill_rate * 100) + '% a year over the plan days; capital on this board is $50, $100 or $150, set by TVL.</li><li>Implied value is a fitted model, not a price; launch price is not modelled.</li><li>Airdrop eligibility is not modelled; no token on record is not proof a protocol has none.</li><li>Missing values show as n/a, never zero.</li>' })
-			)
+		var panel = el('section', { class: 'panel ev-chart' + (chartSeen ? ' settled' : ''), 'aria-label': 'Top five by expected value' },
+			el('h2', { text: 'Top 5 by expected value' }),
+			rows
 		);
+		chartSeen = true;
+		return panel;
 	}
 	function sel(id, label, all, list, cur, set) {
 		var s = el('select', { id: id, 'aria-label': label },
@@ -762,7 +738,7 @@
 		shell.appendChild(header());
 		var top = el('div', { class: 'lede-row' });
 		top.appendChild(lede());
-		top.appendChild(farmNext());
+		top.appendChild(evChart());
 		shell.appendChild(top);
 		if (state.tab === 'pre-token') shell.appendChild(evTop10());
 		shell.appendChild(kpiStrip());

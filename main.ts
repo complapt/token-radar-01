@@ -65,7 +65,7 @@ function copyFiles(from: string, to: string): string[] {
   return copied;
 }
 
-copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
+const dashFiles = copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
 if (shots.length < 3) {
   process.stderr.write(`token radar: screenshots/ holds ${shots.length} image${shots.length === 1 ? '' : 's'}: hand in 3, the board, a detail view and a filtered view\n`);
@@ -83,6 +83,6 @@ writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEX
 
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.anchors_size} live-token anchors, ${radar.set_aside.length} set aside)\n` +
-    `token radar: fit on ${radar.fit.fit_anchors_n} dated anchors; LOO miss x${radar.fit.loo_miss_factor.toFixed(2)}, holdout miss x${radar.fit.holdout_miss_factor.toFixed(2)}, walk-forward miss x${radar.fit.wf_miss_factor.toFixed(2)}, range holds ${(radar.fit.range_holds * 100).toFixed(0)}%; verdicts farm ${radar.kpis.farmable_count} / marginal ${radar.kpis.marginal_count} / skip ${radar.kpis.skip_count}\n` +
-    `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
+    `token radar: fit on ${radar.fit.fit_anchors_n} dated anchors; LOO miss x${radar.fit.loo_miss_factor.toFixed(2)}, holdout miss x${radar.fit.holdout_miss_factor.toFixed(2)} (10-seed mean x${radar.fit.holdout_miss_factor_10seed.toFixed(2)}), walk-forward miss x${radar.fit.wf_miss_factor.toFixed(2)}, range holds ${(radar.fit.range_holds * 100).toFixed(0)}%; launch odds held-out accuracy ${(radar.fit.odds_holdout_accuracy * 100).toFixed(1)}%, Brier ${radar.fit.odds_holdout_brier.toFixed(3)}; verdicts farm ${radar.kpis.farmable_count} / marginal ${radar.kpis.marginal_count} / skip ${radar.kpis.skip_count}\n` +
+    `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dashFiles.length} files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );

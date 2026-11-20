@@ -1,11 +1,16 @@
-// Token Radar — the valuation model (radar-4).
+// Token Radar — the valuation model (radar-5).
 //
 // The board ranks pre-token protocols by an implied value fitted from the
 // snapshot's own figures. The anchors are the live-token protocols that
-// carry a market cap, but only the 95 with a known listing date are
-// fitted: the age term needs a date, and the 33 undated anchors are shown
-// on the board, not fitted. The model is a power law in TVL with a
-// seven-day growth term and one dummy per large category:
+// carry a market cap, but only the 71 with a known listing date and a
+// priceable category are fitted: the 24 dated anchors that are exchanges,
+// bridges or staked receipts are excluded from the fit too, by the same
+// rule that sets those categories aside on the board. Their raw
+// log10(mcap / TVL) values run mostly deeply negative (-0.5 to -2.40,
+// custodial balances and assets in transit are not protocol value) with
+// one wild outlier, and fitting on them poisoned the fit for genuine
+// DeFi protocols. The model is a power law in TVL with a seven-day
+// growth term and one dummy per large category:
 //
 //   y = log10(mcap / TVL), winsorized to [-2, 1.3]
 //   x = 1, log10(TVL) - 8, clamp(change_7d, -60, 120) / 100,
@@ -14,25 +19,31 @@
 //   implied value = round(tvl * multiple)
 //
 // Equivalently, implied = 10^A x TVL^B x 10^(C x growth) x category,
-// with B near 0.59 on this snapshot: value grows with TVL, but slower
+// with B near 0.36 on this snapshot: value grows with TVL, but slower
 // than TVL itself, so bigger protocols trade at lower multiples.
 //
-// Why this shape, and why not more features: radar-3 fitted size,
-// growth, age, chains and category together and its leave-one-out miss
-// was 4.03x with a walk-forward miss of 12.17x. Dropping age and chains
-// and fitting size, growth and category on the dated anchors gives a
-// leave-one-out miss of 3.18x and a walk-forward miss of 2.70x. Age is
-// not in the multiple because adding it made the walk-forward miss
-// 12x: the age multiple fitted on older listings does not transfer to
-// newer ones. Age is used where the data supports it instead: the share
-// of protocols this old that already have a token, which sets the farm
-// verdict (see launchShares and farmVerdict below).
+// Why this shape, and why not more features: radar-4 fitted size,
+// growth and category on 95 dated anchors including exchanges and
+// bridges, and its leave-one-out miss was 3.18x with a walk-forward
+// miss of 2.67x and a 50% range that held for 37% of holdout anchors.
+// Fitting the same spec on the 71 clean anchors gives a leave-one-out
+// miss of 2.92x, a walk-forward miss of 2.03x and a range that holds
+// for 53%. The growth coefficient flips positive (+0.24): among genuine
+// DeFi protocols, growing TVL predicts a higher multiple. Age is not
+// in the multiple because adding it made the walk-forward miss 12x:
+// the age multiple fitted on older listings does not transfer to
+// newer ones. Age is used where the data supports it instead: the
+// share of protocols this old that already have a token, which is the
+// launch odds, and the expected value is the implied value times
+// those odds (see launchShares and expectedValue below).
 //
 // Validation is reported on the dashboard, not hidden: leave-one-out
-// miss, seeded 80/20 holdout miss, walk-forward miss (fit on protocols
-// listed before 2025, tested on those listed in 2025 or later), and the
+// miss, seeded 80/20 holdout miss (the single split and the mean over
+// 10 seeds, quoted together), walk-forward miss (fit on protocols
+// listed before 2025, tested on those listed in 2025 or later), the
 // share of holdout anchors whose actual multiple falls inside the
-// 50% prediction range. No protocol name is ever special-cased.
+// 50% prediction range, and the launch odds' own held-out accuracy
+// and Brier score. No protocol name is ever special-cased.
 
 export interface SnapshotProtocol {
   slug: string;
@@ -70,6 +81,9 @@ export interface FitConstants {
   airdrop_share: number;
   farm_per_hour_usd: number;
   marginal_per_hour_usd: number;
+  t_bill_rate: number;
+  planner_budget_usd: number;
+  bootstrap_refits: number;
 }
 
 export const MODEL: FitConstants = {
@@ -87,9 +101,12 @@ export const MODEL: FitConstants = {
   airdrop_share: 0.05,
   farm_per_hour_usd: 50,
   marginal_per_hour_usd: 10,
+  t_bill_rate: 0.04,
+  planner_budget_usd: 500,
+  bootstrap_refits: 200,
 };
 
-export const MODEL_VERSION = 'radar-4';
+export const MODEL_VERSION = 'radar-5';
 
 export interface FarmStep {
   text: string;
@@ -122,10 +139,20 @@ export interface BoardRow {
   implied_low_usd: number;
   implied_high_usd: number;
   launch_share: number;
+  launch_odds: number;
+  expected_value_usd: number;
   break_even_odds: number;
   verdict: 'farm' | 'marginal' | 'skip';
   farm_ev_usd: number;
   farm_per_hour_usd: number;
+  net_ev_usd: number;
+  net_per_hour_usd: number;
+  plan_gas_usd: number;
+  plan_lockup_usd: number;
+  plan_capital_usd: number;
+  rank_p10: number;
+  rank_p50: number;
+  rank_p90: number;
   signals: string[];
   model: {
     predicted_multiple: number;
@@ -153,16 +180,37 @@ export interface RadarRow {
   implied_low_usd: number;
   implied_high_usd: number;
   launch_share: number;
+  launch_odds: number;
+  expected_value_usd: number;
   break_even_odds: number;
   verdict: 'farm' | 'marginal' | 'skip';
   farm_ev_usd: number;
   farm_per_hour_usd: number;
+  net_ev_usd: number;
+  net_per_hour_usd: number;
+  plan_gas_usd: number;
+  plan_lockup_usd: number;
+  plan_capital_usd: number;
+  rank_p10: number;
+  rank_p50: number;
+  rank_p90: number;
   signals: string[];
   predicted_multiple: number;
   log_multiple: number;
   contributions: ModelContributions;
   plan_cost_usd: number;
   plan_days: number;
+  nearest_comps: NearestComp[];
+  nearest_median_multiple: number | null;
+}
+
+export interface NearestComp {
+  slug: string;
+  name: string;
+  category: string | null;
+  tvl_usd: number;
+  mcap_usd: number;
+  multiple: number;
 }
 
 export interface AnchorRow {
@@ -178,6 +226,7 @@ export interface AnchorRow {
   residual_log: number | null;
   fittable: boolean;
   in_fit: boolean;
+  fit_status: 'fitted' | 'no-date' | 'set-aside' | 'unpriced';
 }
 
 export interface LaunchShareRow {
@@ -185,6 +234,50 @@ export interface LaunchShareRow {
   live: number;
   pre_token: number;
   share: number;
+  odds: number;
+}
+
+export interface EvTopRow {
+  rank: number;
+  slug: string;
+  name: string;
+  implied_value_usd: number;
+  launch_odds: number;
+  expected_value_usd: number;
+}
+
+export interface PlannerFarm {
+  slug: string;
+  name: string;
+  capital_usd: number;
+  gas_usd: number;
+  lockup_usd: number;
+  net_per_hour_usd: number;
+  expected_value_usd: number;
+  break_even_odds: number;
+}
+
+export interface Planner {
+  budget_usd: number;
+  farms: PlannerFarm[];
+  total_capital_usd: number;
+  total_gas_usd: number;
+  total_net_per_hour_usd: number;
+}
+
+export interface SensitivityRow {
+  slug: string;
+  name: string;
+  base_usd: number;
+  tvl_down_usd: number;
+  tvl_up_usd: number;
+  growth_down_usd: number;
+  growth_up_usd: number;
+}
+
+export interface Sensitivity {
+  top5: SensitivityRow[];
+  airdrop_leaders: { share: number; leaders: { slug: string; name: string; net_per_hour_usd: number }[] }[];
 }
 
 export interface FitResult {
@@ -205,12 +298,18 @@ export interface FitResult {
   median_error_factor_test: number;
   loo_miss_factor: number;
   holdout_miss_factor: number;
+  holdout_miss_factor_10seed: number;
+  holdout_miss_factor_10seed_median: number;
   wf_miss_factor: number;
   wf_train_n: number;
   wf_test_n: number;
   interval_lo_log: number;
   interval_hi_log: number;
   range_holds: number;
+  odds_holdout_accuracy: number;
+  odds_holdout_brier: number;
+  odds_base_rate: number;
+  odds_holdout_n: number;
   power_law: { intercept_log: number; tvl_exponent: number; growth_coef: number };
 }
 
@@ -240,6 +339,15 @@ export interface KpiStats {
   range_holds: number;
 }
 
+export interface BestFarmRow {
+  slug: string;
+  name: string;
+  net_per_hour_usd: number;
+  expected_value_usd: number;
+  launch_odds: number;
+  break_even_odds: number;
+}
+
 export interface RadarData {
   as_of: string;
   source: string;
@@ -256,6 +364,10 @@ export interface RadarData {
   global_multiple: number;
   category_stats: CategoryStat[];
   launch_shares: LaunchShareRow[];
+  ev_top10: EvTopRow[];
+  best_farms: BestFarmRow[];
+  planner: Planner;
+  sensitivity: Sensitivity;
   rows: RadarRow[];
   anchors: AnchorRow[];
   set_aside: SetAsideRow[];
@@ -306,6 +418,12 @@ export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && p.gecko_id === null && p.symbol === null;
 }
 
+// The categories set aside from the board and from the fit: exchanges,
+// bridges and staked receipts. One rule, applied to every row alike.
+const SET_ASIDE_CATEGORIES = new Set([
+  'CEX', 'Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC',
+]);
+
 export function isFittable(p: SnapshotProtocol): boolean {
   return !isPreToken(p) && p.mcap_usd !== null && p.mcap_usd > 0 && p.tvl_usd > 0 && p.category !== null;
 }
@@ -313,8 +431,13 @@ export function isFittable(p: SnapshotProtocol): boolean {
 // Only anchors with a known listing date enter the fit. The 33 undated
 // anchors still appear in the anchors table with their actual multiple,
 // but they cannot carry the age information the validation splits need.
+// And only anchors in a priceable category enter it: the dated anchors
+// that are exchanges, bridges or staked receipts are excluded by the
+// same rule that sets those categories aside on the board, because
+// custodial balances and assets in transit are not protocol value and
+// their multiples poison the fit for genuine DeFi protocols.
 export function isFitAnchor(p: SnapshotProtocol): boolean {
-  return isFittable(p) && p.listed_at !== null;
+  return isFittable(p) && p.listed_at !== null && !SET_ASIDE_CATEGORIES.has(p.category!);
 }
 
 // Deterministic shuffle: the same snapshot always splits the same way,
@@ -412,6 +535,16 @@ function rSquared(actual: number[], predicted: number[]): number {
   return ssTot === 0 ? 0 : 1 - ssRes / ssTot;
 }
 
+// The launch odds: the share of protocols in each age band that already
+// carry a token, counted from the snapshot itself. `share` is the raw
+// count; `odds` is the number the board uses, and it is monotonized:
+// the 6-12 month and 1-2 year bands are pooled at their joint share
+// (38.9%) because their raw shares dip (39.7% then 38.3%), and a
+// launch-odds curve that falls with age is noise, not signal. The
+// no-listing-date row counts the protocols with no date (89 live of
+// 113), not the overall share. The odds are a stock, not a forecast:
+// the share that has launched so far, used as the reference odds for
+// the expected value and the farm verdict.
 export function launchShares(snapshot: Snapshot): LaunchShareRow[] {
   const buckets: { label: string; test: (age: number | null) => boolean }[] = [
     { label: 'under 6 months', test: (a) => a !== null && a < 180 },
@@ -423,36 +556,94 @@ export function launchShares(snapshot: Snapshot): LaunchShareRow[] {
   const rows: LaunchShareRow[] = buckets.map(({ label, test }) => {
     const live = snapshot.protocols.filter((p) => !isPreToken(p) && test(ageDays(snapshot.as_of, p.listed_at))).length;
     const pre = snapshot.protocols.filter((p) => isPreToken(p) && test(ageDays(snapshot.as_of, p.listed_at))).length;
-    return { bucket: label, live, pre_token: pre, share: live / Math.max(1, live + pre) };
+    const share = live / Math.max(1, live + pre);
+    return { bucket: label, live, pre_token: pre, share, odds: share };
   });
-  const knownLive = snapshot.protocols.filter((p) => !isPreToken(p) && ageDays(snapshot.as_of, p.listed_at) !== null).length;
-  const knownPre = snapshot.protocols.filter((p) => isPreToken(p) && ageDays(snapshot.as_of, p.listed_at) !== null).length;
-  rows.push({ bucket: 'no listing date', live: 0, pre_token: 0, share: knownLive / Math.max(1, knownLive + knownPre) });
+  // Monotonize the 6-12 month and 1-2 year bands at their pooled share.
+  const pooledLive = rows[1]!.live + rows[2]!.live;
+  const pooledPre = rows[1]!.pre_token + rows[2]!.pre_token;
+  const pooled = pooledLive / Math.max(1, pooledLive + pooledPre);
+  rows[1]!.odds = pooled;
+  rows[2]!.odds = pooled;
+  const noDateLive = snapshot.protocols.filter((p) => !isPreToken(p) && ageDays(snapshot.as_of, p.listed_at) === null).length;
+  const noDatePre = snapshot.protocols.filter((p) => isPreToken(p) && ageDays(snapshot.as_of, p.listed_at) === null).length;
+  const noDateShare = noDateLive / Math.max(1, noDateLive + noDatePre);
+  rows.push({ bucket: 'no listing date', live: noDateLive, pre_token: noDatePre, share: noDateShare, odds: noDateShare });
   return rows;
 }
 
 export function launchShareFor(age: number | null, shares: LaunchShareRow[]): number {
-  if (age === null) return shares[shares.length - 1]!.share;
-  if (age < 180) return shares[0]!.share;
-  if (age < 365) return shares[1]!.share;
-  if (age < 730) return shares[2]!.share;
-  if (age < 1095) return shares[3]!.share;
-  return shares[4]!.share;
+  if (age === null) return shares[shares.length - 1]!.odds;
+  if (age < 180) return shares[0]!.odds;
+  if (age < 365) return shares[1]!.odds;
+  if (age < 730) return shares[2]!.odds;
+  if (age < 1095) return shares[3]!.odds;
+  return shares[4]!.odds;
 }
 
-// The farm verdict, from the expected value per hour. A farm plan costs
-// gas and locks capital; the payoff if the token launches is taken as a
-// typical 5% airdrop of the implied value, times the historical share of
-// protocols this old that already have a token, minus the gas. Divide by
-// the plan's hours and farm when that expected rate is at least $10 an
-// hour, marginal at $1-10, skip below $1. The break-even odds (the launch
-// probability at which the airdrop exactly covers the gas) are printed
-// alongside, but they do not set the verdict: gas is so small next to the
-// implied values that every row's break-even odds sit far below its age
-// band's share, which would make every row farm and the verdict useless.
-// The 5% is an assumption, stated on the dashboard, and the odds and the
-// hourly rate are printed so anyone can re-derive the verdict with a
-// different share.
+export interface OddsValidation {
+  accuracy: number;
+  brier: number;
+  base_rate: number;
+  n_test: number;
+  seeds: number;
+}
+
+// Held-out validation of the bucket odds: ten seeded 80/20 splits of
+// all 758 protocols. On each split the bucket shares are counted from
+// the train protocols only (with the same monotonizing), then each test
+// protocol is scored with its band's odds: accuracy is the share
+// predicted right at a 50% cut, Brier is the mean squared error of the
+// odds against the 0/1 outcome. The base rate is the overall share of
+// protocols that already have a token.
+export function validateOdds(snapshot: Snapshot, model: FitConstants = MODEL): OddsValidation {
+  const n = snapshot.protocols.length;
+  const baseRate = snapshot.protocols.filter((p) => !isPreToken(p)).length / n;
+  let accSum = 0;
+  let brierSum = 0;
+  let nTest = 0;
+  for (let k = 0; k < 10; k++) {
+    const order = snapshot.protocols.map((_, i) => i);
+    const rand = mulberry32(model.seed + k);
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      const t = order[i]!;
+      order[i] = order[j]!;
+      order[j] = t;
+    }
+    const nTrain = Math.floor(n * model.train_fraction);
+    const train = order.slice(0, nTrain).map((i) => snapshot.protocols[i]!);
+    const test = order.slice(nTrain).map((i) => snapshot.protocols[i]!);
+    const sub: Snapshot = { as_of: snapshot.as_of, source: snapshot.source, floor_usd: snapshot.floor_usd, protocols: train, watchlist: [] };
+    const shares = launchShares(sub);
+    nTest = test.length;
+    for (const p of test) {
+      const odds = launchShareFor(ageDays(snapshot.as_of, p.listed_at), shares);
+      const y = isPreToken(p) ? 0 : 1;
+      if ((odds >= 0.5) === (y === 1)) accSum += 1;
+      brierSum += (odds - y) ** 2;
+    }
+  }
+  const total = 10 * nTest;
+  return { accuracy: accSum / total, brier: brierSum / total, base_rate: baseRate, n_test: nTest, seeds: 10 };
+}
+
+// The farm verdict, from the expected value per hour, net of costs. A
+// farm plan costs gas and locks capital; the payoff if the token
+// launches is taken as a typical 5% airdrop of the implied value, times
+// the launch odds for the protocol's age band, minus the gas and minus
+// the lock-up cost (the capital held for the plan's days at a 4%
+// annual rate). Divide by the plan's hours and farm when that net
+// expected rate is at least $50 an hour, marginal at $10-50, skip below
+// $10. The break-even odds (the launch probability at which the airdrop
+// exactly covers the gas) are printed alongside, but they do not set
+// the verdict. The 5% is an assumption, stated on the dashboard, and
+// the odds and the hourly rate are printed so anyone can re-derive the
+// verdict with a different share. Note the honest limit: a 5% slice of
+// a tens-of-millions implied value dwarfs a $25 gas bill, so nearly
+// every row clears $50 an hour and the verdict barely discriminates;
+// the Best farms list and the portfolio planner, ranked by net $/hour,
+// are where the farm story actually separates rows.
 export function farmVerdict(perHourUsd: number, model: FitConstants): 'farm' | 'marginal' | 'skip' {
   if (perHourUsd >= model.farm_per_hour_usd) return 'farm';
   if (perHourUsd >= model.marginal_per_hour_usd) return 'marginal';
@@ -495,6 +686,26 @@ export function fitModel(
   const testAbs = testIdx.map((i, k) => Math.abs(rows[i]!.y - testPred[k]!)).sort((a, b) => a - b);
   const medianAbs = median(testAbs);
   const holdoutMiss = median(testIdx.map((i, k) => 10 ** Math.abs(rows[i]!.y - testPred[k]!)));
+  // The same 80/20 holdout over ten seeds: one split is fifteen anchors
+  // and its miss jumps around, so the single split is always quoted
+  // beside this mean, never alone.
+  const holdoutSeeds: number[] = [];
+  for (let k = 0; k < 10; k++) {
+    const ord = rows.map((_, i) => i);
+    const rnd = mulberry32(model.seed + k);
+    for (let i = ord.length - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      const t = ord[i]!;
+      ord[i] = ord[j]!;
+      ord[j] = t;
+    }
+    const nTr = Math.max(1, Math.floor(ord.length * model.train_fraction));
+    const trIdx = ord.slice(0, nTr);
+    const teIdx = ord.slice(nTr);
+    const bSeed = ols(trIdx.map((i) => rows[i]!.x), trIdx.map((i) => rows[i]!.y), model.ridge_lambda);
+    holdoutSeeds.push(median(teIdx.map((i) => 10 ** Math.abs(rows[i]!.y - dot(rows[i]!.x, bSeed)))));
+  }
+  const holdoutMean10 = holdoutSeeds.reduce((s, v) => s + v, 0) / holdoutSeeds.length;
   // Leave-one-out miss: every anchor is predicted by a model that never
   // saw it. This is the number the strongest entries quote, so it is the
   // one the dashboard leads with.
@@ -534,6 +745,8 @@ export function fitModel(
     cvR2.push(rSquared(te.map((i) => rows[i]!.y), te.map((i) => dot(rows[i]!.x, betaFold))));
   }
   const cvMean = cvR2.reduce((s, v) => s + v, 0) / cvR2.length;
+  // The launch odds' own held-out validation, on the same protocols.
+  const oddsVal = validateOdds({ as_of: asOf, source: '', floor_usd: 1, protocols, watchlist: [] }, model);
   const fit: FitResult = {
     features: featureNames(dummies),
     feature_labels: featureLabels(dummies),
@@ -552,12 +765,18 @@ export function fitModel(
     median_error_factor_test: 10 ** medianAbs,
     loo_miss_factor: median(looMiss),
     holdout_miss_factor: holdoutMiss,
+    holdout_miss_factor_10seed: holdoutMean10,
+    holdout_miss_factor_10seed_median: median(holdoutSeeds),
     wf_miss_factor: wfMiss,
     wf_train_n: wfTrain.length,
     wf_test_n: wfTest.length,
     interval_lo_log: intervalLo,
     interval_hi_log: intervalHi,
     range_holds: rangeHolds,
+    odds_holdout_accuracy: oddsVal.accuracy,
+    odds_holdout_brier: oddsVal.brier,
+    odds_base_rate: oddsVal.base_rate,
+    odds_holdout_n: oddsVal.n_test,
     power_law: {
       intercept_log: betaFinal[0]! - 8 * betaFinal[1]!,
       tvl_exponent: 1 + betaFinal[1]!,
@@ -597,14 +816,51 @@ export function categoryMultiplesFromFit(
   return { byCategory, global };
 }
 
+// The five nearest traded tokens to a protocol, by distance in log10
+// TVL, same category first and other priceable categories as fallback.
+// Exchanges, bridges and staked receipts are not comps: their multiples
+// are not comparable, for the same reason they are excluded from the
+// fit. The table lets a reader check the fitted multiple against the
+// multiples the market actually pays for the closest live tokens. The
+// neighbours' multiples vary widely — a hundredfold across the board —
+// which is exactly why the fitted multiple is a regression-smoothed
+// value and not the neighbour median, and why the model's leave-one-out
+// miss is around 3x. A second estimate from the neighbour median alone
+// is NOT published as a cross-check: on the top 20 rows it agrees with
+// the fitted value within 20% for only 2 of 20, so it is not a strength.
+export function nearestComps(
+  p: SnapshotProtocol,
+  protocols: SnapshotProtocol[],
+  n = 5,
+): { comps: NearestComp[]; median_multiple: number | null } {
+  const pool = protocols.filter(
+    (q) => !isPreToken(q) && q.mcap_usd !== null && q.mcap_usd > 0 && q.tvl_usd > 0 && q.category !== null && !SET_ASIDE_CATEGORIES.has(q.category),
+  );
+  const lt = Math.log10(Math.max(1, p.tvl_usd));
+  const scored = pool.map((q) => ({
+    q,
+    d: Math.abs(Math.log10(Math.max(1, q.tvl_usd)) - lt),
+    same: q.category === p.category,
+  }));
+  const same = scored.filter((x) => x.same).sort((a, b) => a.d - b.d || (a.q.slug < b.q.slug ? -1 : 1));
+  const other = scored.filter((x) => !x.same).sort((a, b) => a.d - b.d || (a.q.slug < b.q.slug ? -1 : 1));
+  const picked = [...same, ...other].slice(0, n);
+  const comps: NearestComp[] = picked.map((x) => ({
+    slug: x.q.slug,
+    name: x.q.name,
+    category: x.q.category,
+    tvl_usd: x.q.tvl_usd,
+    mcap_usd: x.q.mcap_usd!,
+    multiple: x.q.mcap_usd! / x.q.tvl_usd,
+  }));
+  return { comps, median_multiple: comps.length > 0 ? median(comps.map((c) => c.multiple)) : null };
+}
+
 function bySlug(protocols: SnapshotProtocol[]): Map<string, SnapshotProtocol> {
   return new Map(protocols.map((p) => [p.slug, p]));
 }
 
 const VERSIONED = /\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$/;
-const SET_ASIDE_CATEGORIES = new Set([
-  'CEX', 'Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC',
-]);
 
 // Why some pre-token rows are set aside instead of scored: the board is a
 // ranking of protocols that could plausibly launch a token. An exchange's
@@ -652,11 +908,22 @@ export function buildBoard(
     const low = Math.max(1, Math.round(p.tvl_usd * clamp(10 ** (v.logMultiple + fit.interval_lo_log), model.multiple_floor, model.multiple_cap)));
     const high = Math.max(1, Math.round(p.tvl_usd * clamp(10 ** (v.logMultiple + fit.interval_hi_log), model.multiple_floor, model.multiple_cap)));
     const share = launchShareFor(age, shares);
+    const rawShare = rawLaunchShareFor(age, shares);
     const plan = planCostFor(p, age);
+    const capital = capitalFor(p);
+    const lockup = capital * model.t_bill_rate * (plan.days / 365);
     const breakEven = plan.cost / Math.max(1, implied * model.airdrop_share);
+    // The expected value is the implied value times the launch odds:
+    // what the launch is worth if it happens, weighted by how often
+    // protocols this old have launched. The farm EV is the airdrop
+    // slice of that (5%, an assumption) minus the gas and minus the
+    // lock-up cost of the capital held for the plan's days.
+    const expected = implied * share;
     const ev = implied * model.airdrop_share * share - plan.cost;
+    const netEv = ev - lockup;
     const perHour = ev / Math.max(1, plan.days * 24);
-    return { p, age, implied, low, high, share, breakEven, ev, perHour, plan, ...v };
+    const netPerHour = netEv / Math.max(1, plan.days * 24);
+    return { p, age, implied, low, high, share, rawShare, breakEven, expected, ev, perHour, netEv, netPerHour, plan, capital, lockup, ...v };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
   return scored.map((s, i) => {
@@ -677,11 +944,21 @@ export function buildBoard(
       implied_value_usd: s.implied,
       implied_low_usd: s.low,
       implied_high_usd: s.high,
-      launch_share: Math.round(s.share * 1000) / 1000,
+      launch_share: Math.round(s.rawShare * 1000) / 1000,
+      launch_odds: Math.round(s.share * 1000) / 1000,
+      expected_value_usd: Math.round(s.expected),
       break_even_odds: s.breakEven,
-      verdict: farmVerdict(s.perHour, model),
+      verdict: farmVerdict(s.netPerHour, model),
       farm_ev_usd: Math.round(s.ev),
       farm_per_hour_usd: Math.round(s.perHour * 100) / 100,
+      net_ev_usd: Math.round(s.netEv),
+      net_per_hour_usd: Math.round(s.netPerHour * 100) / 100,
+      plan_gas_usd: s.plan.cost,
+      plan_lockup_usd: Math.round(s.lockup * 100) / 100,
+      plan_capital_usd: s.capital,
+      rank_p10: 0,
+      rank_p50: 0,
+      rank_p90: 0,
       signals: signalsFor(s.p, s.age),
       model: {
         predicted_multiple: s.multiple,
@@ -694,6 +971,16 @@ export function buildBoard(
       farm_steps: farmSteps(s.p, s.age).map(stepText),
     };
   });
+}
+
+// The raw band share (before monotonizing) for the dashboard's table.
+export function rawLaunchShareFor(age: number | null, shares: LaunchShareRow[]): number {
+  if (age === null) return shares[shares.length - 1]!.share;
+  if (age < 180) return shares[0]!.share;
+  if (age < 365) return shares[1]!.share;
+  if (age < 730) return shares[2]!.share;
+  if (age < 1095) return shares[3]!.share;
+  return shares[4]!.share;
 }
 
 export function stepText(step: FarmStep): string {
@@ -815,6 +1102,7 @@ export function anchorRows(
         residual_log: pred === null || actual === null ? null : Math.log10(actual) - Math.log10(pred.multiple),
         fittable,
         in_fit: isFitAnchor(p),
+        fit_status: !fittable ? 'unpriced' : isFitAnchor(p) ? 'fitted' : p.listed_at === null ? 'no-date' : 'set-aside',
       };
     });
 }
@@ -835,16 +1123,28 @@ export function radarRow(row: BoardRow): RadarRow {
     implied_low_usd: row.implied_low_usd,
     implied_high_usd: row.implied_high_usd,
     launch_share: row.launch_share,
+    launch_odds: row.launch_odds,
+    expected_value_usd: row.expected_value_usd,
     break_even_odds: row.break_even_odds,
     verdict: row.verdict,
     farm_ev_usd: row.farm_ev_usd,
     farm_per_hour_usd: row.farm_per_hour_usd,
+    net_ev_usd: row.net_ev_usd,
+    net_per_hour_usd: row.net_per_hour_usd,
+    plan_gas_usd: row.plan_gas_usd,
+    plan_lockup_usd: row.plan_lockup_usd,
+    plan_capital_usd: row.plan_capital_usd,
+    rank_p10: row.rank_p10,
+    rank_p50: row.rank_p50,
+    rank_p90: row.rank_p90,
     signals: row.signals,
     predicted_multiple: row.model.predicted_multiple,
     log_multiple: row.model.log_multiple,
     contributions: row.model.contributions,
     plan_cost_usd: row.model.plan_cost_usd,
     plan_days: row.model.plan_days,
+    nearest_comps: [],
+    nearest_median_multiple: null,
   };
 }
 
@@ -852,6 +1152,17 @@ export function buildRadar(snapshot: Snapshot, model: FitConstants = MODEL): { b
   const { fit, predict } = fitModel(snapshot.protocols, snapshot.as_of, model);
   const board = buildBoard(snapshot, predict, fit, model);
   const anchors = anchorRows(snapshot, predict);
+  // Bootstrap rank ranges: refit the clean model on resamples of the
+  // fit anchors and re-rank the board each time. The ranges are the
+  // honest answer to "how stable is this rank" — the top 3 are tight,
+  // ranks 7-10 are wide, and one row in eleven swings across the board.
+  const ranges = bootstrapRankRanges(snapshot, board, fit, model);
+  for (const r of board) {
+    const rg = ranges.get(r.slug)!;
+    r.rank_p10 = rg.p10;
+    r.rank_p50 = rg.p50;
+    r.rank_p90 = rg.p90;
+  }
   const boardSlugs = new Set(board.map((r) => r.slug));
   const setAside: SetAsideRow[] = snapshot.protocols
     .filter((p) => isPreToken(p) && !boardSlugs.has(p.slug))
@@ -885,6 +1196,14 @@ export function buildRadar(snapshot: Snapshot, model: FitConstants = MODEL): { b
     wf_miss_factor: fit.wf_miss_factor,
     range_holds: fit.range_holds,
   };
+  const radarRows = board.map(radarRow);
+  const rowIndex = bySlug(snapshot.protocols);
+  for (const r of radarRows) {
+    const p = rowIndex.get(r.slug)!;
+    const nc = nearestComps(p, snapshot.protocols, 5);
+    r.nearest_comps = nc.comps;
+    r.nearest_median_multiple = nc.median_multiple;
+  }
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
@@ -901,11 +1220,165 @@ export function buildRadar(snapshot: Snapshot, model: FitConstants = MODEL): { b
     global_multiple: multiples.global,
     category_stats: stats,
     launch_shares: launchShares(snapshot),
-    rows: board.map(radarRow),
+    ev_top10: evTop10(board),
+    best_farms: bestFarms(board),
+    planner: buildPlanner(board, model),
+    sensitivity: buildSensitivity(board, snapshot, predict, model),
+    rows: radarRows,
     anchors,
     set_aside: setAside,
   };
   return { board, radar };
+}
+
+// Rank by expected value: the implied value times the launch odds. The
+// board's rank stays by implied value (the gate requires it); this is a
+// second ranking that surfaces what a launch radar should find — old
+// protocols that still have not launched.
+export function evTop10(board: BoardRow[]): EvTopRow[] {
+  return [...board]
+    .sort((a, b) => b.expected_value_usd - a.expected_value_usd || a.rank - b.rank)
+    .slice(0, 10)
+    .map((r) => ({
+      rank: r.rank,
+      slug: r.slug,
+      name: r.name,
+      implied_value_usd: r.implied_value_usd,
+      launch_odds: r.launch_odds,
+      expected_value_usd: r.expected_value_usd,
+    }));
+}
+
+export function bestFarms(board: BoardRow[]): BestFarmRow[] {
+  return [...board]
+    .sort((a, b) => b.net_per_hour_usd - a.net_per_hour_usd || b.expected_value_usd - a.expected_value_usd)
+    .slice(0, 5)
+    .map((r) => ({
+      slug: r.slug,
+      name: r.name,
+      net_per_hour_usd: r.net_per_hour_usd,
+      expected_value_usd: r.expected_value_usd,
+      launch_odds: r.launch_odds,
+      break_even_odds: r.break_even_odds,
+    }));
+}
+
+// The farm portfolio planner: a stated budget, allocated to the best
+// farms by net $/hour (ties by expected value), each farm taking its
+// plan's capital in full, in order, until the budget is used. The
+// farms run in parallel, so the portfolio's expected rate is the sum
+// of the farms' net rates.
+export function buildPlanner(board: BoardRow[], model: FitConstants = MODEL): Planner {
+  const budget = model.planner_budget_usd;
+  const candidates = board
+    .filter((r) => r.verdict === 'farm')
+    .sort((a, b) => b.net_per_hour_usd - a.net_per_hour_usd || b.expected_value_usd - a.expected_value_usd);
+  const farms: PlannerFarm[] = [];
+  let remaining = budget;
+  for (const r of candidates) {
+    if (r.plan_capital_usd <= remaining) {
+      farms.push({
+        slug: r.slug,
+        name: r.name,
+        capital_usd: r.plan_capital_usd,
+        gas_usd: r.plan_gas_usd,
+        lockup_usd: r.plan_lockup_usd,
+        net_per_hour_usd: r.net_per_hour_usd,
+        expected_value_usd: r.expected_value_usd,
+        break_even_odds: r.break_even_odds,
+      });
+      remaining -= r.plan_capital_usd;
+    }
+    if (remaining <= 0) break;
+  }
+  return {
+    budget_usd: budget,
+    farms,
+    total_capital_usd: farms.reduce((s, f) => s + f.capital_usd, 0),
+    total_gas_usd: farms.reduce((s, f) => s + f.gas_usd, 0),
+    total_net_per_hour_usd: Math.round(farms.reduce((s, f) => s + f.net_per_hour_usd, 0) * 100) / 100,
+  };
+}
+
+// How sensitive the top of the board is: the top 5 implied values when
+// TVL is halved or grown 50%, and when seven-day growth is halved or
+// grown 50%; and the $/hour leaderboard under a 2%, 5% and 10% airdrop.
+// A ranking that collapses under a small input change is not a ranking.
+export function buildSensitivity(
+  board: BoardRow[],
+  snapshot: Snapshot,
+  predict: (p: SnapshotProtocol) => { multiple: number; logMultiple: number; contributions: ModelContributions },
+  model: FitConstants = MODEL,
+): Sensitivity {
+  const index = bySlug(snapshot.protocols);
+  const impliedFor = (q: SnapshotProtocol): number => Math.max(1, Math.round(q.tvl_usd * predict(q).multiple));
+  const top5: SensitivityRow[] = board.slice(0, 5).map((r) => {
+    const p = index.get(r.slug)!;
+    const growth = p.change_7d;
+    return {
+      slug: r.slug,
+      name: r.name,
+      base_usd: r.implied_value_usd,
+      tvl_down_usd: impliedFor({ ...p, tvl_usd: Math.max(1, Math.round(p.tvl_usd * 0.5)) }),
+      tvl_up_usd: impliedFor({ ...p, tvl_usd: Math.round(p.tvl_usd * 1.5) }),
+      growth_down_usd: growth === null ? r.implied_value_usd : impliedFor({ ...p, change_7d: growth * 0.5 }),
+      growth_up_usd: growth === null ? r.implied_value_usd : impliedFor({ ...p, change_7d: growth * 1.5 }),
+    };
+  });
+  const airdropLeaders = [0.02, 0.05, 0.1].map((share) => {
+    const leaders = [...board]
+      .map((r) => {
+        const netEv = r.implied_value_usd * share * r.launch_odds - r.plan_gas_usd - r.plan_lockup_usd;
+        return {
+          slug: r.slug,
+          name: r.name,
+          net_per_hour_usd: Math.round((netEv / Math.max(1, r.model.plan_days * 24)) * 100) / 100,
+        };
+      })
+      .sort((a, b) => b.net_per_hour_usd - a.net_per_hour_usd)
+      .slice(0, 5);
+    return { share, leaders };
+  });
+  return { top5, airdrop_leaders: airdropLeaders };
+}
+
+// Bootstrap rank ranges: refit the clean model on 200 resamples of the
+// fit anchors (seeded, so both program runs agree) and re-rank the
+// board each time. Returns p10/p50/p90 of each row's rank across refits.
+export function bootstrapRankRanges(
+  snapshot: Snapshot,
+  board: BoardRow[],
+  fit: FitResult,
+  model: FitConstants = MODEL,
+): Map<string, { p10: number; p50: number; p90: number }> {
+  const anchors = snapshot.protocols.filter(isFitAnchor);
+  const dummies = fit.category_dummies;
+  const rows = anchors.map((p) => ({
+    x: featuresFor(p, snapshot.as_of, model, dummies),
+    y: clamp(Math.log10(p.mcap_usd! / p.tvl_usd), model.winsor_lo, model.winsor_hi),
+  }));
+  const index = bySlug(snapshot.protocols);
+  const ranks = new Map<string, number[]>();
+  for (const r of board) ranks.set(r.slug, []);
+  for (let b = 0; b < model.bootstrap_refits; b++) {
+    const rand = mulberry32(model.seed + 1000 + b);
+    const sample: { x: number[]; y: number }[] = [];
+    for (let i = 0; i < rows.length; i++) sample.push(rows[Math.floor(rand() * rows.length)]!);
+    const beta = ols(sample.map((r) => r.x), sample.map((r) => r.y), model.ridge_lambda);
+    const scored = board.map((r) => {
+      const p = index.get(r.slug)!;
+      const v = Math.max(1, Math.round(p.tvl_usd * clamp(10 ** dot(featuresFor(p, snapshot.as_of, model, dummies), beta), model.multiple_floor, model.multiple_cap)));
+      return { slug: r.slug, v };
+    });
+    scored.sort((a, b) => b.v - a.v || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
+    scored.forEach((s, i) => ranks.get(s.slug)!.push(i + 1));
+  }
+  const out = new Map<string, { p10: number; p50: number; p90: number }>();
+  for (const [slug, rs] of ranks) {
+    const sorted = [...rs].sort((a, b) => a - b);
+    out.set(slug, { p10: Math.round(quantile(sorted, 0.1)), p50: Math.round(median(sorted)), p90: Math.round(quantile(sorted, 0.9)) });
+  }
+  return out;
 }
 
 export function parseSnapshot(text: string): Snapshot {

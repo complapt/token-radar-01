@@ -83,12 +83,6 @@ tbody tr:hover, tbody tr[data-selected="true"] { background: var(--panel2); }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 22px 0; }
 .chip { display: inline-block; background: rgba(245, 184, 61, .14); color: var(--accent); border: 1px solid rgba(245, 184, 61, .4); border-radius: 20px; padding: 3px 10px; font-size: 12.5px; white-space: nowrap; }
 .model h3 { margin: 16px 0 8px; font-size: 15px; }
-.bars { display: flex; flex-direction: column; gap: 7px; }
-.bar-row { display: grid; grid-template-columns: 220px 1fr 64px; gap: 12px; align-items: center; font-size: 13.5px; }
-.bar-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bar-track { height: 8px; background: #232d47; border-radius: 4px; overflow: hidden; }
-.bar-track i { display: block; height: 100%; background: var(--accent2); }
-@media (max-width: 640px) { .bar-row { grid-template-columns: 130px 1fr 56px; } }
 
 .radar { padding: 18px 20px; }
 .radar h2 { margin: 0 0 6px; font-size: 18px; }
@@ -97,6 +91,7 @@ tbody tr:hover, tbody tr[data-selected="true"] { background: var(--panel2); }
 .radar-tip { position: absolute; z-index: 5; background: #0a0f1c; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; font-size: 13px; max-width: 280px; pointer-events: none; }
 
 .kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; padding: 14px; margin: 16px 0; }
+.ev { margin: 16px 0; }
 .kpi span { display: block; color: var(--muted); font-size: 12.5px; }
 .kpi b { font-size: 20px; }
 .set-aside { margin-top: 6px; }

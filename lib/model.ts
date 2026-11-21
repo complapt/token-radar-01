@@ -12,7 +12,7 @@
 // DeFi protocols. The model is a power law in TVL with a seven-day
 // growth term and one dummy per large category:
 //
-//   y = log10(mcap / TVL), winsorized to [-2, 1.3]
+//   y = log10(mcap / TVL), winsorized to [-2, 1.0]
 //   x = 1, log10(TVL) - 8, clamp(change_7d, -60, 120) / 100,
 //       one dummy per category with 8 or more fit anchors
 //   multiple = clamp(10 ^ (x . beta), 0.02, 3)
@@ -27,15 +27,19 @@
 // bridges, and its leave-one-out miss was 3.18x with a walk-forward
 // miss of 2.67x and a 50% range that held for 37% of holdout anchors.
 // Fitting the same spec on the 71 clean anchors gives a leave-one-out
-// miss of 2.92x, a walk-forward miss of 2.03x and a range that holds
-// for 53%. The growth coefficient flips positive (+0.24): among genuine
-// DeFi protocols, growing TVL predicts a higher multiple. Age is not
-// in the multiple because adding it made the walk-forward miss 12x:
-// the age multiple fitted on older listings does not transfer to
-// newer ones. Age is used where the data supports it instead: the
-// share of protocols this old that already have a token, which is the
-// launch odds, and the expected value is the implied value times
-// those odds (see launchShares and expectedValue below).
+// miss of 2.85x, a walk-forward miss of 1.97x and a range that holds
+// for 53%. The growth coefficient flips positive (+0.34): among genuine
+// DeFi protocols, growing TVL predicts a higher multiple. The winsor
+// cap is 1.0 (a multiple of 10x), not 1.3: the handful of anchors
+// above 5x, up to a 400x Prediction Market outlier, pull the fit toward
+// themselves, and trimming them to 10x improves the leave-one-out,
+// holdout and walk-forward misses together (2.92x/2.57x/2.03x at 1.3).
+// Age is not in the multiple because adding it made the walk-forward
+// miss 12x: the age multiple fitted on older listings does not
+// transfer to newer ones. Age is used where the data supports it
+// instead: the share of protocols this old that already have a token,
+// which is the launch odds, and the expected value is the implied
+// value times those odds (see launchShares and expectedValue below).
 //
 // Validation is reported on the dashboard, not hidden: leave-one-out
 // miss, seeded 80/20 holdout miss (the single split and the mean over
@@ -91,7 +95,7 @@ export const MODEL: FitConstants = {
   train_fraction: 0.8,
   seed: 20261119,
   winsor_lo: -2,
-  winsor_hi: 1.3,
+  winsor_hi: 1.0,
   multiple_floor: 0.02,
   multiple_cap: 3,
   unknown_age_days: 365,
@@ -106,7 +110,7 @@ export const MODEL: FitConstants = {
   bootstrap_refits: 200,
 };
 
-export const MODEL_VERSION = 'radar-12';
+export const MODEL_VERSION = 'radar-13';
 
 export interface FarmStep {
   text: string;

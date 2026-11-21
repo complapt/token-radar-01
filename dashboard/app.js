@@ -1,4 +1,4 @@
-// Token Radar dashboard (radar-11), from window.RADAR.
+// Token Radar dashboard (radar-13), from window.RADAR.
 // Light theme is the default; dark keeps the same layout. No webfonts:
 // system stacks only, so the board stays offline-capable.
 (function() {

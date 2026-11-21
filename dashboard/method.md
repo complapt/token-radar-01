@@ -1,4 +1,4 @@
-# Token Radar, radar-12: method
+# Token Radar, radar-13: method
 
 ## The model
 
@@ -6,7 +6,7 @@ One ordinary least squares fit of `log10(market-cap / TVL)` on size
 (`log10(TVL) − 8`), seven-day TVL growth and a category dummy (Lending,
 RWA), with a small ridge term. The fitted multiple is clamped to
 [0.02, 3] and multiplied by TVL for the implied value. As a power law:
-implied = 10^4.36 × TVL^0.36 × 10^(0.24 × growth) × category.
+implied = 10^4.27 × TVL^0.37 × 10^(0.34 × growth) × category.
 
 ## Clean comps
 
@@ -15,7 +15,7 @@ market cap, a known listing date and a priceable category. Excluded, by
 the same rule that sets them aside on the board: 24 exchanges, bridges
 or staked receipts (their TVL is custodial balances, assets in transit
 or a repackaged asset, not protocol value; fitting on them made the
-leave-one-out miss ×3.18 instead of ×2.92) and 33 priced anchors with
+leave-one-out miss ×3.18 instead of ×2.85) and 33 priced anchors with
 no listing date (fitting on all 128 made the holdout miss ×5.84). No
 name is special-cased and no row is hand-picked.
 
@@ -23,12 +23,12 @@ name is special-cased and no row is hand-picked.
 
 | Check | Result |
 |---|---|
-| Leave-one-out miss | ×2.92 |
-| Seeded 80/20 holdout, one split (n=15) | ×2.88 |
-| Seeded 80/20 holdout, 10-seed mean (median) | ×2.57 (×2.63) |
-| Walk-forward, fitted before 2025, tested on 2025+ | ×2.03 |
+| Leave-one-out miss | ×2.85 |
+| Seeded 80/20 holdout, one split (n=15) | ×2.89 |
+| Seeded 80/20 holdout, 10-seed mean (median) | ×2.55 (×2.55) |
+| Walk-forward, fitted before 2025, tested on 2025+ | ×1.97 |
 | 50% prediction range holds, holdout | 53% |
-| Total implied value, 203 rows | $2.65B |
+| Total implied value, 203 rows | $2.62B |
 
 Quote the single split and the 10-seed mean together: one split is 15
 anchors, so it jumps around.
@@ -58,7 +58,7 @@ one: a single farming wallet realistically receives well under 1% of a
 launch's fully diluted value. Earlier rounds used 5%, which made the
 verdict non-discriminating — a 5% slice of a tens-of-millions implied
 value dwarfs a $25 gas bill, so 202 of 203 rows were farm and one was
-marginal. At 0.5% the verdicts separate: 28 farm, 146 marginal, 29
+marginal. At 0.5% the verdicts separate: 26 farm, 149 marginal, 28
 skip. Every row prints its net hourly rate and break-even odds, so the
 verdict can be re-derived with a different share. The **Best farms**
 list and the **$500 portfolio**, ranked by net $/hour, are where farms

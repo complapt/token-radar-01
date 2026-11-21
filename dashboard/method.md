@@ -1,4 +1,4 @@
-# Token Radar, radar-13: method
+# Token Radar, radar-14: method
 
 ## The model
 
@@ -21,6 +21,11 @@ name is special-cased and no row is hand-picked.
 
 ## Validation (recomputed from the sealed snapshot)
 
+Every value term is tested held-out twice: (1) a seeded 80/20
+holdout, repeated over 10 seeds; (2) a walk-forward holdout, fitted
+on protocols listed before 2025 and tested on those listed in 2025
+or later.
+
 | Check | Result |
 |---|---|
 | Leave-one-out miss | ×2.85 |
@@ -36,7 +41,12 @@ anchors, so it jumps around.
 ## Age: not in the multiple, used for launch odds
 
 Age is deliberately **not** in the fitted multiple: adding it made the
-walk-forward miss ×8.50–×12. It is used for **launch odds**, the share
+walk-forward miss ×8.50–×12. A maturity multiplier by age band
+(median residual per band, shrunk toward 1.0) was tested the same way
+and rejected too: it worsened the leave-one-out miss (×2.85 → ×3.17)
+and left walk-forward unchanged, because the young bands hold only 3
+and 7 anchors and their residuals are a few high-multiple protocols,
+not an age effect. It is used for **launch odds**, the share
 of protocols in each age band that already carry a token, counted from
 the snapshot. The 6–12 month and 1–2 year bands are pooled at their
 joint 38.7% (raw shares dip 39.7% then 38.3%; odds that fall with age

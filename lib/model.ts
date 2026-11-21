@@ -36,7 +36,12 @@
 // holdout and walk-forward misses together (2.92x/2.57x/2.03x at 1.3).
 // Age is not in the multiple because adding it made the walk-forward
 // miss 12x: the age multiple fitted on older listings does not
-// transfer to newer ones. Age is used where the data supports it
+// transfer to newer ones. A maturity multiplier by age band (median
+// residual per band, shrunk toward 1.0) was tested the same way and
+// rejected too: it worsened the leave-one-out miss (2.85x to 3.17x)
+// and left walk-forward unchanged — the young bands hold only 3 and 7
+// anchors, so their residuals are a few high-multiple protocols, not
+// an age effect. Age is used where the data supports it
 // instead: the share of protocols this old that already have a token,
 // which is the launch odds, and the expected value is the implied
 // value times those odds (see launchShares and expectedValue below).
@@ -110,7 +115,7 @@ export const MODEL: FitConstants = {
   bootstrap_refits: 200,
 };
 
-export const MODEL_VERSION = 'radar-13';
+export const MODEL_VERSION = 'radar-14';
 
 export interface FarmStep {
   text: string;

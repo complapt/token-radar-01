@@ -1,4 +1,4 @@
-// Token Radar dashboard (radar-13), from window.RADAR.
+// Token Radar dashboard (radar-14), from window.RADAR.
 // Light theme is the default; dark keeps the same layout. No webfonts:
 // system stacks only, so the board stays offline-capable.
 (function() {
@@ -292,6 +292,14 @@
 			kpi('trend', 'Total implied value', fmtUsd(k.total_implied_usd), 'Sum of fitted implied values'),
 			kpi('sprout', 'Farm verdicts', k.farmable_count + ' Farm', k.marginal_count + ' Marginal · ' + k.skip_count + ' Skip of ' + D.board_size + ' ranked'),
 			kpi('search', 'Top sector multiple', fmtX(topMed.med) + ' TVL', topMed.cat + ' · ' + topMed.n + ' listed peers')
+		);
+	}
+	function integrityLine() {
+		var k = D.kpis;
+		var missing = k.coverage_total - k.coverage_accounted;
+		return el('p', { class: 'integrity-line' },
+			el('b', { text: 'Integrity: ' }),
+			el('span', { text: k.coverage_accounted + '/' + k.coverage_total + ' protocols accounted for · ' + D.watchlist_size + '/' + D.watchlist_size + ' watchlist · ' + D.board_size + ' ranked · ' + missing + ' missing' })
 		);
 	}
 	function toolbar() {
@@ -686,6 +694,7 @@
 			shell.appendChild(watchView());
 		} else {
 			shell.appendChild(kpiStrip());
+			shell.appendChild(integrityLine());
 			shell.appendChild(toolbar());
 			var list = rows();
 			if (filtered()) shell.appendChild(cohort(list));

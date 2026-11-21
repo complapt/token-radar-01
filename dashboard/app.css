@@ -55,7 +55,9 @@ h3{font-size:15px;line-height:22px;font-weight:600;margin:0}
 [data-theme="dark"] .btn.toggle.on{background:#0e7490;border-color:#0e7490}
 .btn .ic{display:inline-flex}
 /* KPI strip */
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:24px 0 16px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:24px 0 8px}
+.integrity-line{font-size:12px;line-height:18px;color:var(--muted);margin:0 0 16px}
+.integrity-line b{color:var(--text)}
 .kpi{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px}
 .kpi-ic{position:absolute;top:14px;right:14px;color:var(--accent)}
 .kpi-label{display:block;font-size:11px;line-height:16px;font-weight:600;letter-spacing:.3px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;padding-right:28px}

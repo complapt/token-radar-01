@@ -98,7 +98,7 @@ export const MODEL: FitConstants = {
   min_category_peers: 8,
   growth_floor: -60,
   growth_cap: 120,
-  airdrop_share: 0.05,
+  airdrop_share: 0.005,
   farm_per_hour_usd: 50,
   marginal_per_hour_usd: 10,
   t_bill_rate: 0.04,
@@ -106,7 +106,7 @@ export const MODEL: FitConstants = {
   bootstrap_refits: 200,
 };
 
-export const MODEL_VERSION = 'radar-5';
+export const MODEL_VERSION = 'radar-12';
 
 export interface FarmStep {
   text: string;

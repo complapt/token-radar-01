@@ -1,4 +1,4 @@
-# Token Radar, radar-9: method
+# Token Radar, radar-12: method
 
 ## The model
 
@@ -50,15 +50,19 @@ have not launched (Polymarket implied #9, expected #3; Lofty #35, #9).
 
 ## Farm plans, net of costs
 
-The payoff if the token launches is a typical **5% airdrop** of the
+The payoff if the token launches is a **0.5% airdrop** of the
 implied value, times the launch odds, minus gas, minus lock-up cost of
 the capital at 4% a year. Farm at $50 net/hour or more, marginal
-$10–$50, skip below $10. The 5% is an assumption; every row prints its
-net hourly rate and break-even odds, so the verdict can be re-derived
-with a different share. The honest limit: a 5% slice of a
-tens-of-millions implied value dwarfs a $25 gas bill, so 202 of 203 rows
-are farm and one is marginal. The **Best farms** list and the **$500
-portfolio**, ranked by net $/hour, are where farms separate.
+$10–$50, skip below $10. The 0.5% is an assumption, and a deliberate
+one: a single farming wallet realistically receives well under 1% of a
+launch's fully diluted value. Earlier rounds used 5%, which made the
+verdict non-discriminating — a 5% slice of a tens-of-millions implied
+value dwarfs a $25 gas bill, so 202 of 203 rows were farm and one was
+marginal. At 0.5% the verdicts separate: 28 farm, 146 marginal, 29
+skip. Every row prints its net hourly rate and break-even odds, so the
+verdict can be re-derived with a different share. The **Best farms**
+list and the **$500 portfolio**, ranked by net $/hour, are where farms
+separate.
 
 ## Rank stability
 

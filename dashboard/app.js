@@ -478,7 +478,7 @@
 					var tail = at >= 0 ? s.slice(at + 1) : '';
 					return el('li', null, el('b', { text: action }), el('span', { class: 'cost', text: tail }));
 				})),
-				sub('Net expected value ' + fmtUsd(row.net_ev_usd) + ' over the plan, after ' + fmtUsd(row.plan_gas_usd) + ' gas and ' + fmtUsd(row.plan_lockup_usd) + ' lock-up cost on ' + fmtUsd(row.plan_capital_usd) + ' of capital. The launch breaks even at ' + (row.break_even_odds * 100).toFixed(2) + '% odds. The 5% airdrop share is an assumption. No token is promised, and farming costs real money.'),
+				sub('Net expected value ' + fmtUsd(row.net_ev_usd) + ' over the plan, after ' + fmtUsd(row.plan_gas_usd) + ' gas and ' + fmtUsd(row.plan_lockup_usd) + ' lock-up cost on ' + fmtUsd(row.plan_capital_usd) + ' of capital. The launch breaks even at ' + (row.break_even_odds * 100).toFixed(2) + '% odds. The 0.5% airdrop share is an assumption. No token is promised, and farming costs real money.'),
 				wlBtn
 			)
 		);
@@ -635,7 +635,7 @@
 				}))
 			),
 			h3('Farm verdicts, net of costs'),
-			sub('The payoff if the token launches is a typical 5% airdrop of the implied value, times the launch odds, minus gas, minus the lock-up cost of the capital at 4% a year. Farm at $' + m.farm_per_hour_usd + ' net/hour or more, marginal $' + m.marginal_per_hour_usd + '–$' + m.farm_per_hour_usd + ', skip below $' + m.marginal_per_hour_usd + '. ' + D.kpis.farmable_count + ' rows are farm, ' + D.kpis.marginal_count + ' marginal, ' + D.kpis.skip_count + ' skip. The 5% is an assumption, every row prints its net hourly rate and break-even odds, so the verdict can be re-derived with a different share. The honest limit: a 5% slice of tens of millions dwarfs a $25 gas bill, so nearly every row is farm.'),
+			sub('The payoff if the token launches is a typical 0.5% airdrop of the implied value, times the launch odds, minus gas, minus the lock-up cost of the capital at 4% a year. Farm at $' + m.farm_per_hour_usd + ' net/hour or more, marginal $' + m.marginal_per_hour_usd + '–$' + m.farm_per_hour_usd + ', skip below $' + m.marginal_per_hour_usd + '. ' + D.kpis.farmable_count + ' rows are farm, ' + D.kpis.marginal_count + ' marginal, ' + D.kpis.skip_count + ' skip. The 0.5% is an assumption, every row prints its net hourly rate and break-even odds, so the verdict can be re-derived with a different share. A single wallet realistically receives well under 1% of a launch\u2019s fully diluted value; at the 5% used in earlier rounds, nearly every row was farm.'),
 			h3('Best farms and the $500 portfolio'),
 			sub('The five best farms by net $/hour, and a $' + D.planner.budget_usd + ' portfolio allocated to the best farms in order, each taking its plan\u2019s capital in full. The farms run in parallel, so the portfolio\u2019s rate is the sum of the farms\u2019 net rates: $' + D.planner.total_net_per_hour_usd.toFixed(2) + ' an hour on $' + D.planner.total_capital_usd + ' of capital and $' + D.planner.total_gas_usd + ' of gas.'),
 			el('table', { class: 'mult-table' },
